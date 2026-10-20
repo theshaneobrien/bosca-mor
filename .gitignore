@@ -1,0 +1,16 @@
+# Godot
+launcher/.godot/
+launcher/export/
+*.translation
+
+# Python
+__pycache__/
+*.pyc
+
+# Local output
+shots/
+build/
+
+# Brand logos never go in the repo (D12)
+/icons/
+*.local.md

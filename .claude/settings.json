@@ -1,0 +1,34 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(godot:*)",
+      "Bash(godot4:*)",
+      "Bash(python3:*)",
+      "Bash(bash -n:*)",
+      "Bash(shellcheck:*)",
+      "Bash(install/install.sh --dry-run:*)",
+      "Bash(xprop:*)",
+      "Bash(pidstat:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(ls:*)",
+      "Bash(mkdir:*)"
+    ],
+    "deny": [
+      "Bash(sudo:*)",
+      "Bash(systemctl poweroff:*)",
+      "Bash(systemctl reboot:*)",
+      "Bash(poweroff:*)",
+      "Bash(reboot:*)",
+      "Bash(shutdown:*)",
+      "Bash(xkill:*)",
+      "Bash(wmctrl -c:*)",
+      "Bash(wmctrl -i -c:*)",
+      "Bash(rm -rf:*)",
+      "Bash(git push --force:*)"
+    ]
+  }
+}
