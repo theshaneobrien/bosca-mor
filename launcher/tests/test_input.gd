@@ -215,6 +215,7 @@ func test_accept_emits_launch() -> void:
 	launched.clear()
 	_key(KEY_RIGHT)
 	_key(KEY_ENTER)
+	home.play_return()
 	_button(JOY_BUTTON_A)
 	eq(launched, ["plex", "plex"], "Enter and A launch the focused app")
 	_teardown()

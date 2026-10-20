@@ -5,15 +5,21 @@ const Tokens := preload("res://theme/tokens.gd")
 const Apps := preload("res://scripts/apps.gd")
 const Glyphs := preload("res://scripts/glyphs.gd")
 const InputModeScript := preload("res://scripts/input_mode.gd")
+const Motion := preload("res://scripts/motion.gd")
+const StateFile := preload("res://scripts/state_file.gd")
 
 const DAYS := ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
 const MONTHS := ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 
 ## The user picked an app. Launching itself comes with the daemon (step 5).
 signal launch_requested(app: Dictionary)
+## The launch zoom and fade to black finished; the window can hide.
+signal launch_faded
 
 ## Leave empty to read the user's apps.json (or the bundled default).
 @export var apps_path := ""
+## Leave empty to read the user's state.json.
+@export var state_path := ""
 
 var apps: Array = []
 var focus := 0
@@ -23,10 +29,17 @@ var _scale := 1.0
 var _date: Label
 var _clock: Label
 var _wifi: TextureRect
-var _kind: Label
+var _kind: Label                    # labels of the hero page showing now
 var _name: Label
 var _desc: Label
+var _pages: Array[VBoxContainer] = []
+var _page := 0
+var _accent := Color()
 var _strip: HBoxContainer
+var _strip_x := 0.0                 # where the carousel is heading
+var _tile_on: Array[bool] = []
+var _fade: ColorRect
+var _launching := false
 var _clock_timer: Timer
 var _hint_keys: Array[PanelContainer] = []
 var _hint_style := "remote"
@@ -41,6 +54,7 @@ func _ready() -> void:
 	for e in loaded.errors:
 		push_warning("apps.json: " + e)
 	apps = Apps.visible(loaded.apps)
+	Motion.reduce = bool(StateFile.load_file(state_path).get("reduce_motion", false))
 	_build()
 	_ignore_mouse(self)
 	_dwell_timer = Timer.new()
@@ -55,11 +69,13 @@ func _ready() -> void:
 	_scale = _display_scale()
 	_raster_glyphs()
 	get_viewport().size_changed.connect(_on_size_changed)
-	set_focus(focus)
+	set_focus(focus, false)
 	_tick_clock()
 
 
 func _unhandled_input(ev: InputEvent) -> void:
+	if _launching:
+		return
 	if ev is InputEventMouseMotion:
 		_on_pointer_move(ev.position)
 		return
@@ -79,14 +95,39 @@ func _unhandled_input(ev: InputEvent) -> void:
 	get_viewport().set_input_as_handled()
 
 
-## Moves focus by one tile and stops at the ends.
+## Moves focus by one tile; at the ends the row nudges and stays.
 func move(step: int) -> void:
-	set_focus(focus + step)
+	var to := focus + step
+	if to < 0 or to >= apps.size():
+		Motion.bump(_strip, "position:x", _strip_x, step * Tokens.BUMP)
+		return
+	set_focus(to)
 
 
+## Zooms the focused tile while the screen fades to black.
 func launch() -> void:
-	if not apps.is_empty():
-		launch_requested.emit(apps[focus])
+	if apps.is_empty() or _launching:
+		return
+	_launching = true
+	_hover = -1
+	launch_requested.emit(apps[focus])
+	Motion.to(_tile(focus), "scale", Vector2.ONE * Tokens.LAUNCH_SCALE, "launch", true)
+	_fade.visible = true
+	Motion.to(_fade, "color:a", 1.0, "launch").finished.connect(launch_faded.emit)
+
+
+## Back from an app: fade in from black with the same tile focused.
+func play_return() -> void:
+	_launching = false
+	Motion.stop(_tile(focus), "scale")
+	_tile(focus).scale = Vector2.ONE * Tokens.TILE_FOCUS_SCALE
+	_fade.visible = true
+	_fade.color.a = 1.0
+	Motion.to(_fade, "color:a", 0.0, "return").finished.connect(func(): _fade.visible = false)
+
+
+func is_launching() -> bool:
+	return _launching
 
 
 ## Index of the tile (with its label) under a viewport position, or -1.
@@ -132,18 +173,61 @@ func _ignore_mouse(n: Node) -> void:
 		_ignore_mouse(c)
 
 
-func set_focus(i: int) -> void:
+func set_focus(i: int, animate := true) -> void:
 	if apps.is_empty():
 		return
+	var old := focus
 	focus = clampi(i, 0, apps.size() - 1)
 	for t in tiles.size():
-		_style_tile(t, t == focus)
-	var app: Dictionary = apps[focus]
+		if not animate or t >= _tile_on.size() or _tile_on[t] != (t == focus):
+			_style_tile(t, t == focus, animate)
+	if animate and focus == old:
+		return
+	_show_hero(apps[focus], animate)
+	var strip_x := Tokens.PAD_X - maxi(0, focus - Tokens.CAROUSEL_LEAD) * (Tokens.TILE + Tokens.TILE_GAP)
+	var moved := strip_x != _strip_x
+	_strip_x = strip_x
+	if animate:
+		if moved:
+			Motion.to(_strip, "position:x", _strip_x, "carousel", true)
+	else:
+		Motion.stop(_strip, "position:x")
+		_strip.position.x = _strip_x
+
+
+# The outgoing hero page fades out while the incoming one fades in, rising
+# into place, its kind label tweening from the old accent to the new one.
+func _show_hero(app: Dictionary, animate: bool) -> void:
+	var from_accent := _accent
+	_accent = app.accent
+	if animate:
+		Motion.to(_pages[_page], "modulate:a", 0.0, "hero")
+		_page = 1 - _page
+	var page := _pages[_page]
+	page.get_parent().move_child(page, -1)
+	_kind = page.get_node("Kind")
+	_name = page.get_node("Name")
+	_desc = page.get_node("Desc")
 	_kind.text = app.kind.to_upper()
-	_kind.add_theme_color_override("font_color", app.accent)
 	_name.text = app.name
 	_desc.text = app.description
-	_strip.position.x = Tokens.PAD_X - maxi(0, focus - Tokens.CAROUSEL_LEAD) * (Tokens.TILE + Tokens.TILE_GAP)
+	if not animate:
+		for p in _pages:
+			Motion.stop(p, "modulate:a")
+			Motion.stop(p, "position:y")
+			p.modulate.a = 1.0 if p == page else 0.0
+			p.offset_top = 0.0      # not position: before layout that bakes in a size
+			p.offset_bottom = 0.0
+		Motion.stop(_kind, "theme_override_colors/font_color")
+		_kind.add_theme_color_override("font_color", app.accent)
+		return
+	page.modulate.a = 0.0
+	Motion.to(page, "modulate:a", 1.0, "hero")
+	if not Motion.reduce:
+		page.position.y = Tokens.HERO_RISE
+	Motion.to(page, "position:y", 0.0, "hero", true)
+	_kind.add_theme_color_override("font_color", from_accent)
+	Motion.to(_kind, "theme_override_colors/font_color", app.accent, "hero")
 
 
 # Build -----------------------------------------------------------------------
@@ -165,6 +249,12 @@ func _build() -> void:
 	col.add_child(_build_hero())
 	col.add_child(_build_row())
 	col.add_child(_build_hints())
+
+	_fade = ColorRect.new()
+	_fade.color = Color(Tokens.BLACK, 0.0)
+	_fade.set_anchors_preset(PRESET_FULL_RECT)
+	_fade.visible = false
+	add_child(_fade)
 
 
 func _build_top_bar() -> Control:
@@ -198,28 +288,39 @@ func _build_top_bar() -> Control:
 
 
 func _build_hero() -> Control:
+	var hero := Control.new()
+	hero.size_flags_vertical = SIZE_EXPAND_FILL
+	for i in 2:
+		_pages.append(_build_hero_page())
+		hero.add_child(_pages[i])
+	var m := _margin(hero)
+	m.size_flags_vertical = SIZE_EXPAND_FILL
+	return m
+
+
+func _build_hero_page() -> VBoxContainer:
 	var hero := VBoxContainer.new()
+	hero.set_anchors_preset(PRESET_FULL_RECT)
 	hero.add_theme_constant_override("separation", 0)
 	hero.alignment = BoxContainer.ALIGNMENT_END
-	hero.size_flags_vertical = SIZE_EXPAND_FILL
 
-	_kind = _label("", Tokens.mono(500, Tokens.HERO_KIND, Tokens.TRACK_LABEL), Tokens.HERO_KIND, Tokens.TEXT)
-	hero.add_child(_kind)
+	var kind := _label("", Tokens.mono(500, Tokens.HERO_KIND, Tokens.TRACK_LABEL), Tokens.HERO_KIND, Tokens.TEXT)
+	kind.name = "Kind"
+	hero.add_child(kind)
 
 	# The hero name is set solid (line-height 1), so its label box is taller
 	# than the line; take the overhang out of the gaps either side.
 	var name_font := Tokens.sans(700, Tokens.HERO_NAME, Tokens.TRACK_HERO)
 	var overhang := (name_font.get_height(Tokens.HERO_NAME) - Tokens.HERO_NAME) / 2.0
 	hero.add_child(_spacer(Tokens.HERO_KIND_GAP - overhang))
-	_name = _label("", name_font, Tokens.HERO_NAME, Tokens.TEXT)
-	hero.add_child(_name)
+	var title := _label("", name_font, Tokens.HERO_NAME, Tokens.TEXT)
+	title.name = "Name"
+	hero.add_child(title)
 	hero.add_child(_spacer(Tokens.HERO_DESC_GAP - overhang))
-	_desc = _label("", Tokens.sans(400, Tokens.HERO_DESC), Tokens.HERO_DESC, Tokens.MUTED)
-	hero.add_child(_desc)
-
-	var m := _margin(hero)
-	m.size_flags_vertical = SIZE_EXPAND_FILL
-	return m
+	var desc := _label("", Tokens.sans(400, Tokens.HERO_DESC), Tokens.HERO_DESC, Tokens.MUTED)
+	desc.name = "Desc"
+	hero.add_child(desc)
+	return hero
 
 
 func _build_row() -> Control:
@@ -257,8 +358,11 @@ func _build_tile(app: Dictionary) -> Control:
 
 	var gap := Tokens.RING_GAP
 	var outer := Tokens.RING_GAP + Tokens.RING_WIDTH
-	tile.add_child(_ring("Gap", gap, Tokens.BG, gap))
-	tile.add_child(_ring("Ring", outer, Tokens.RING, Tokens.RING_WIDTH))
+	var ring := Control.new()
+	ring.name = "Focus"
+	tile.add_child(ring)
+	ring.add_child(_ring("Gap", gap, Tokens.BG, gap))
+	ring.add_child(_ring("Ring", outer, Tokens.RING, Tokens.RING_WIDTH))
 
 	var glyph := TextureRect.new()
 	glyph.name = "Glyph"
@@ -398,12 +502,27 @@ func _margin(c: Control) -> MarginContainer:
 	return m
 
 
-func _style_tile(i: int, on: bool) -> void:
+func _tile(i: int) -> Control:
+	return tiles[i].get_node("Holder/Tile")
+
+
+func _style_tile(i: int, on: bool, animate: bool) -> void:
+	while _tile_on.size() <= i:
+		_tile_on.append(false)
+	_tile_on[i] = on
 	var cell := tiles[i]
-	var tile: Control = cell.get_node("Holder/Tile")
-	tile.scale = Vector2.ONE * (Tokens.TILE_FOCUS_SCALE if on else 1.0)
-	tile.get_node("Gap").visible = on
-	tile.get_node("Ring").visible = on
+	var tile := _tile(i)
+	var ring: Control = tile.get_node("Focus")
+	var scale_to := Vector2.ONE * (Tokens.TILE_FOCUS_SCALE if on else 1.0)
+	var alpha := 1.0 if on else 0.0
+	if animate:
+		Motion.to(tile, "scale", scale_to, "tile_focus", true)
+		Motion.to(ring, "modulate:a", alpha, "tile_focus")
+	else:
+		Motion.stop(tile, "scale")
+		Motion.stop(ring, "modulate:a")
+		tile.scale = scale_to
+		ring.modulate.a = alpha
 	var label: Label = cell.get_node("Label")
 	label.add_theme_font_override("font", Tokens.sans(700 if on else 500, Tokens.TILE_LABEL))
 	label.add_theme_color_override("font_color", Tokens.TEXT if on else Tokens.DIM)

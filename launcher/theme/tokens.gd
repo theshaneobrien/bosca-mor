@@ -20,6 +20,7 @@ const CYAN := Color("#5fdcea")
 const TEAL := Color("#3cc4a8")
 const STATUS := Color("#d6d6e0")    # design: top bar icon and date
 const KEY_BG := Color("#2a2a3c")    # design: hint key pill
+const BLACK := Color("#000000")     # SPEC motion: launch fades to black
 
 # Focus ring: gap in BG colour, then the ring
 const RING_GAP := 6

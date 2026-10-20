@@ -41,7 +41,7 @@ func _shoot() -> void:
 		screen.apps_path = opts.apps
 	vp.add_child(screen)
 	if not opts.focus.is_empty():
-		screen.set_focus(int(opts.focus))
+		screen.set_focus(int(opts.focus), false)
 	if not opts.hints.is_empty():
 		screen._set_hint_style(opts.hints)
 

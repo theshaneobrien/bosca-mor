@@ -43,3 +43,13 @@ func test_empty_config_does_not_crash() -> void:
 	tree.root.add_child(h)
 	eq(h.tiles.size(), 0, "no tiles")
 	h.free()
+
+
+func test_hero_pages_fill_hero_area() -> void:
+	var h := _home()
+	await tree.process_frame
+	await tree.process_frame
+	for p in h._pages:
+		eq(p.get_rect(), Rect2(Vector2.ZERO, p.get_parent().size), "hero page rect")
+	check(h._pages[0].get_parent().size.y > 300, "hero area has height: %s" % h._pages[0].get_parent().size)
+	h.free()
