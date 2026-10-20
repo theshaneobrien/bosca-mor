@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Text Editor
+Exec=xed %U
+Icon=accessories-text-editor
+StartupWMClass=Xed
+
+[Desktop Action new]
+Name=New Window

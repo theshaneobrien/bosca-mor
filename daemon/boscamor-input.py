@@ -19,6 +19,7 @@ import errno
 import json
 import logging
 import os
+import re
 import secrets
 import selectors
 import signal
@@ -57,6 +58,21 @@ MAX_LINE = 65536
 NOTIFY_TITLE = "Launcher closed"
 NOTIFY_BODY = "Press Home on the remote, the Guide button, or Super + Home to bring it back."
 LAUNCHER_TITLE = "Launcher"  # the launcher's window title, for the wmctrl raise fallback
+RETURN_POLL_S = 0.25
+RETURN_WAIT_S = 5.0
+# Window types Return to Bosca Mor never closes. Dialogs belong to a parent.
+SKIP_TYPES = {"DESKTOP", "DOCK", "NOTIFICATION", "SPLASH", "TOOLBAR", "MENU",
+              "DIALOG", "UTILITY", "DROPDOWN_MENU", "POPUP_MENU", "TOOLTIP", "COMBO", "DND"}
+# WM_CLASS values (either half) of windows that are part of the desktop or the launcher.
+SKIP_CLASSES = {"cinnamon", "nemo-desktop", "boscamor", "launcher"}
+WID = re.compile(r"^0x[0-9a-f]+$")
+APP_DIRS = [
+    os.path.expanduser("~/.local/share/applications"),
+    os.path.expanduser("~/.local/share/flatpak/exports/share/applications"),
+    "/var/lib/flatpak/exports/share/applications",
+    "/usr/local/share/applications",
+    "/usr/share/applications",
+]
 POWER_COMMANDS = {
     "poweroff": ["systemctl", "poweroff"],
     "reboot": ["systemctl", "reboot"],
@@ -118,6 +134,86 @@ def parse_devices(text):
     return found
 
 
+# Windows (xprop text) -------------------------------------------------------------
+
+def norm_wid(text):
+    """0x03a00007 and 0x3a00007 are the same window."""
+    return "0x%x" % int(text, 16)
+
+
+def parse_client_list(text):
+    """Window ids from `xprop -root _NET_CLIENT_LIST`."""
+    if "#" not in text:
+        return []
+    return [norm_wid(w) for w in re.findall(r"0x[0-9a-fA-F]+", text.split("#", 1)[1])]
+
+
+def parse_window(text):
+    """Type, class, name and transient-for from `xprop -id <wid> ...`."""
+    props = {"types": [], "classes": [], "name": "", "transient_for": None}
+    for line in text.splitlines():
+        if "not found" in line or "no such atom" in line:
+            continue
+        if line.startswith("_NET_WM_WINDOW_TYPE"):
+            props["types"] = [a.strip().replace("_NET_WM_WINDOW_TYPE_", "")
+                              for a in line.split("=", 1)[-1].split(",") if a.strip()]
+        elif line.startswith("WM_CLASS"):
+            props["classes"] = [_unquote(q) for q in re.findall(r'"((?:[^"\\]|\\.)*)"', line)]
+        elif line.startswith("_NET_WM_NAME") or (line.startswith("WM_NAME") and not props["name"]):
+            found = re.search(r'"((?:[^"\\]|\\.)*)"', line)
+            if found:
+                props["name"] = _unquote(found.group(1))
+        elif line.startswith("WM_TRANSIENT_FOR"):
+            found = re.search(r"0x[0-9a-fA-F]+", line)
+            if found:
+                props["transient_for"] = norm_wid(found.group(0))
+    return props
+
+
+def _unquote(s):
+    return re.sub(r"\\(.)", r"\1", s)
+
+
+def closable(wid, props):
+    """True for the windows Return to Bosca Mor asks to close."""
+    types = props["types"] or (["DIALOG"] if props["transient_for"] else ["NORMAL"])
+    if types[0] != "NORMAL" or any(t in SKIP_TYPES for t in types):
+        return False
+    if any(c.lower() in SKIP_CLASSES for c in props["classes"]):
+        return False
+    return props["name"] != LAUNCHER_TITLE
+
+
+def desktop_entry_for(classes, dirs):
+    """Name and Icon of the .desktop entry matching a WM_CLASS, or None."""
+    want = {c.lower() for c in classes}
+    for d in dirs:
+        try:
+            files = sorted(os.listdir(d))
+        except OSError:
+            continue
+        for f in files:
+            if not f.endswith(".desktop"):
+                continue
+            keys = {}
+            try:
+                with open(os.path.join(d, f), encoding="utf-8", errors="replace") as fh:
+                    group = ""
+                    for line in fh:
+                        line = line.strip()
+                        if line.startswith("["):
+                            group = line
+                        elif group == "[Desktop Entry]" and "=" in line:
+                            k, v = line.split("=", 1)
+                            keys.setdefault(k.strip(), v.strip())
+            except OSError:
+                continue
+            names = {f[:-8].lower(), keys.get("StartupWMClass", "").lower()}
+            if want & names and keys.get("Name"):
+                return {"name": keys["Name"], "icon": keys.get("Icon", "")}
+    return None
+
+
 # The daemon -------------------------------------------------------------------
 
 class App:
@@ -164,6 +260,8 @@ class Daemon:
         self.server = None
         self.port = None
         self._denied = set()
+        self.returning = None  # {"deadline", "next"} while closing desktop windows
+        self.app_dirs = APP_DIRS
 
     # Overridable for tests.
     def now(self):
@@ -179,6 +277,15 @@ class Daemon:
 
     def signal_group(self, pgid, sig):
         os.killpg(pgid, sig)
+
+    def run_capture(self, argv):
+        """A helper binary's stdout, or "" if it failed."""
+        try:
+            return subprocess.run(argv, capture_output=True, text=True, timeout=2,
+                                  stdin=subprocess.DEVNULL).stdout
+        except (OSError, subprocess.SubprocessError) as e:
+            log.warning("could not run %s: %s", argv[0], e)
+            return ""
 
     # Setup --------------------------------------------------------------------
 
@@ -248,6 +355,8 @@ class Daemon:
         if now >= self.next_mem:
             self.sample_memory()
             self.next_mem = now + MEM_SAMPLE_S
+        if self.returning and now >= self.returning["next"]:
+            self.poll_return()
         if self.raise_at is not None and now >= self.raise_at:
             self.raise_at = None
             if not self.visible:
@@ -267,6 +376,8 @@ class Daemon:
             due.append(self.raise_at)
         if self.app and self.app.closing:
             due.append(now + CLOSING_POLL_S)
+        if self.returning:
+            due.append(self.returning["next"])
         due += [c.since + HANDSHAKE_S for c in self.clients if not c.authed]
         return max(0.0, min(due) - now)
 
@@ -351,9 +462,14 @@ class Daemon:
         elif cmd == "desktop":
             self.desktop = True
             self.visible = False
-            self.run_cmd(["notify-send", NOTIFY_TITLE, NOTIFY_BODY])
+            if msg.get("notify", True):
+                self.run_cmd(["notify-send", NOTIFY_TITLE, NOTIFY_BODY])
         elif cmd == "return":
             self.return_from_desktop()
+        elif cmd == "show_window":
+            self.show_window(msg.get("wid"))
+        elif cmd == "force_close":
+            self.force_close(msg.get("wids"))
         else:
             log.warning("unknown command %r", cmd)
 
@@ -398,10 +514,80 @@ class Daemon:
         self.send({"evt": "show"})
         self.raise_at = self.now() + RAISE_FALLBACK_S
 
+    # Return to Bosca Mor ------------------------------------------------------
+
+    def list_windows(self):
+        """Every client window: [(wid, props)]."""
+        root = self.run_capture(["xprop", "-root", "_NET_CLIENT_LIST"])
+        out = []
+        for wid in parse_client_list(root):
+            text = self.run_capture(["xprop", "-id", wid, "_NET_WM_WINDOW_TYPE", "WM_CLASS",
+                                     "_NET_WM_NAME", "WM_NAME", "WM_TRANSIENT_FOR"])
+            out.append((wid, parse_window(text)))
+        return out
+
     def return_from_desktop(self):
-        # Step 8 replaces this with the Return to Bosca Mor flow.
+        """Ask every desktop window to close, then show Home or Still open."""
+        if self.returning:
+            return
         self.desktop = False
-        self.show()
+        windows = [(w, p) for w, p in self.list_windows() if closable(w, p)]
+        if not windows:
+            self.show()
+            return
+        for wid, props in windows:
+            log.info("return: closing %s (%s)", wid, props["name"])
+            self.act(["wmctrl", "-i", "-c", wid])
+        now = self.now()
+        self.returning = {"deadline": now + RETURN_WAIT_S, "next": now + RETURN_POLL_S}
+
+    def poll_return(self):
+        """Every 250 ms for up to 5 s: done once nothing closable is left."""
+        windows = self.list_windows()
+        left = [(w, p) for w, p in windows if closable(w, p)]
+        now = self.now()
+        if not left:
+            self.returning = None
+            self.show()
+        elif now >= self.returning["deadline"]:
+            self.returning = None
+            self.send({"evt": "still_open", "apps": [self.describe(w, p, windows) for w, p in left]})
+        else:
+            self.returning["next"] = now + RETURN_POLL_S
+
+    def describe(self, wid, props, windows):
+        """What the Still open screen lists for a window."""
+        entry = desktop_entry_for(props["classes"], self.app_dirs) if props["classes"] else None
+        asking = any(p["transient_for"] == wid for _, p in windows)
+        return {"wid": wid, "name": entry["name"] if entry else (props["name"] or "Untitled window"),
+                "icon": entry["icon"] if entry else "", "asking": asking}
+
+    def show_window(self, wid):
+        """Show me: the launcher has hidden; raise the window with its prompt."""
+        if not isinstance(wid, str) or not WID.match(wid):
+            log.warning("show_window: bad window id %r", wid)
+            return
+        self.visible = False
+        self.desktop = True  # the next Home starts the flow again
+        self.run_cmd(["wmctrl", "-i", "-a", wid])
+
+    def force_close(self, wids):
+        """Close anyway, after the launcher's confirm: xkill each window, never a PID."""
+        if not isinstance(wids, list):
+            return
+        self.desktop = False
+        for wid in wids:
+            if isinstance(wid, str) and WID.match(wid):
+                self.act(["xkill", "-id", wid])
+            else:
+                log.warning("force_close: bad window id %r", wid)
+
+    def act(self, argv):
+        """Commands that close windows; logged instead under dry run (D26)."""
+        if dry_run():
+            log.info("dry run: would run %s", " ".join(argv))
+            return
+        self.run_cmd(argv)
 
     # Apps ---------------------------------------------------------------------
 

@@ -2,7 +2,8 @@
 # 1920x1080 base the same way canvas_items stretch scales the window.
 # godot --path launcher -s res://tools/shot.gd -- --state=home --size=1920x1080 --out=../shots/home.png
 # States: home, menu (as Menu.dc.html), power and restart (as Power.dc.html),
-# settings (as Settings.dc.html; --section=N --row=N pick another), osk.
+# settings (as Settings.dc.html; --section=N --row=N pick another), osk,
+# stillopen (as StillOpen.dc.html), forceclose (its confirm).
 # Options: --focus=N (focused tile), --item=N (sidebar item), --apps=PATH
 # (apps.json to use), --hints=remote|xbox|playstation (hint key style)
 extends SceneTree
@@ -10,9 +11,14 @@ extends SceneTree
 const Tokens := preload("res://theme/tokens.gd")
 const MainScene := preload("res://scenes/main.tscn")
 const InputModeScript := preload("res://scripts/input_mode.gd")
-const STATES := ["home", "menu", "power", "restart", "settings", "osk"]
+const STATES := ["home", "menu", "power", "restart", "settings", "osk", "stillopen", "forceclose"]
+# The two windows in the design's Still open screen.
+const STILL := [
+	{"wid": "0x3a00007", "name": "LibreOffice Writer", "icon": "libreoffice-writer", "asking": true},
+	{"wid": "0x4400002", "name": "Text Editor", "icon": "accessories-text-editor", "asking": false},
+]
 # Defaults that match the design references.
-const FOCUS := {"home": 0, "menu": 2, "power": 0, "restart": 0, "settings": 0, "osk": 0}
+const FOCUS := {"home": 0, "menu": 2, "power": 0, "restart": 0, "settings": 0, "osk": 0, "stillopen": 0, "forceclose": 0}
 
 
 func _initialize() -> void:
@@ -71,6 +77,11 @@ func _shoot() -> void:
 				st.col = 1
 				st._accept()
 			st._render()
+		"stillopen", "forceclose":
+			main._on_still_open(STILL)
+			if opts.state == "forceclose":
+				main.state.set_still_focus(1)
+				main.state.handle("accept")
 	await _frames()
 
 	var out: String = opts.out if opts.out else "../shots/%s.png" % opts.state

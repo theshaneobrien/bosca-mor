@@ -1,0 +1,5 @@
+_NET_WM_WINDOW_TYPE(ATOM) = _NET_WM_WINDOW_TYPE_NORMAL
+WM_CLASS(STRING) = "libreoffice", "libreoffice-writer"
+_NET_WM_NAME(UTF8_STRING) = "Untitled 1 - LibreOffice Writer"
+WM_NAME(COMPOUND_TEXT) = "Untitled 1 - LibreOffice Writer"
+WM_TRANSIENT_FOR:  not found.

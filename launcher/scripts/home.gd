@@ -10,6 +10,7 @@ const StateFile := preload("res://scripts/state_file.gd")
 const HintBar := preload("res://scripts/hint_bar.gd")
 const UI := preload("res://scripts/ui.gd")
 const Wifi := preload("res://scripts/wifi.gd")
+const IconResolver := preload("res://scripts/icon_resolver.gd")
 
 const DAYS := ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
 const MONTHS := ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
@@ -429,6 +430,33 @@ func _build_tile(app: Dictionary) -> Control:
 	glyph.stretch_mode = TextureRect.STRETCH_SCALE
 	tile.add_child(glyph)
 
+	# A real logo: "inset" centred at 60% on the tint, or "full" filling the
+	# tile, clipped to its rounded corners by the Clip panel's shape.
+	var inset := TextureRect.new()
+	inset.name = "Icon"
+	var isz := Tokens.TILE * Tokens.ICON_INSET
+	inset.size = Vector2(isz, isz)
+	inset.position = Vector2(Tokens.TILE - isz, Tokens.TILE - isz) / 2.0
+	inset.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	inset.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	inset.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+	inset.visible = false
+	tile.add_child(inset)
+	var clip := Panel.new()
+	clip.name = "Clip"
+	clip.size = Vector2(Tokens.TILE, Tokens.TILE)
+	clip.clip_children = CanvasItem.CLIP_CHILDREN_ONLY
+	clip.add_theme_stylebox_override("panel", _box(Color.WHITE, Tokens.TILE_RADIUS))
+	clip.visible = false
+	var full := TextureRect.new()
+	full.name = "Full"
+	full.size = Vector2(Tokens.TILE, Tokens.TILE)
+	full.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	full.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	full.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+	clip.add_child(full)
+	tile.add_child(clip)
+
 	var label := _label(app.name, Tokens.sans(500, Tokens.TILE_LABEL), Tokens.TILE_LABEL, Tokens.DIM)
 	label.name = "Label"
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -514,13 +542,29 @@ func _style_tile(i: int, on: bool, animate: bool) -> void:
 	label.add_theme_color_override("font_color", Tokens.TEXT if on else Tokens.DIM)
 
 
-# Glyphs are rasterised for the focused size at the current display scale.
+# Icons and glyphs are rasterised for the focused size at the current
+# display scale.
 func _raster_glyphs() -> void:
 	var s := _scale * Tokens.TILE_FOCUS_SCALE
 	for i in tiles.size():
 		var app: Dictionary = apps[i]
-		var tr: TextureRect = tiles[i].get_node("Holder/Tile/Glyph")
-		tr.texture = Glyphs.texture(Glyphs.name_for(app), app.accent, Tokens.GLYPH, Tokens.GLYPH_STROKE, s)
+		var tile: Panel = tiles[i].get_node("Holder/Tile")
+		var glyph: TextureRect = tile.get_node("Glyph")
+		var inset: TextureRect = tile.get_node("Icon")
+		var clip: Panel = tile.get_node("Clip")
+		var full_style: bool = app.get("icon_style", "inset") == "full"
+		var tex: Texture2D = null
+		var found := IconResolver.find(app)
+		if found:
+			var logical: float = Tokens.TILE if full_style else Tokens.TILE * Tokens.ICON_INSET
+			tex = IconResolver.texture(found.path, roundi(logical * s), app.id)
+		glyph.visible = tex == null
+		inset.visible = tex != null and not full_style
+		clip.visible = tex != null and full_style
+		inset.texture = tex if inset.visible else null
+		clip.get_node("Full").texture = tex if clip.visible else null
+		glyph.texture = Glyphs.texture(Glyphs.name_for(app), app.accent, Tokens.GLYPH, Tokens.GLYPH_STROKE, s) if glyph.visible else null
+		tile.add_theme_stylebox_override("panel", _box(Color(app.tint, 0.0) if clip.visible else app.tint, Tokens.TILE_RADIUS))
 	_wifi.texture = null              # set_wifi draws it again at the new scale
 	set_wifi(_wifi_state)
 

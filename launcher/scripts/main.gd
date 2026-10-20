@@ -14,6 +14,7 @@ const InputModeScript := preload("res://scripts/input_mode.gd")
 const Motion := preload("res://scripts/motion.gd")
 const SettingsView := preload("res://scripts/settings.gd")
 const Prefs := preload("res://scripts/prefs.gd")
+const StillOpen := preload("res://scripts/still_open.gd")
 
 const OFF_TEXT := {"poweroff": "Shutting down", "restart": "Restarting"}
 
@@ -28,6 +29,7 @@ var home: Control
 var sidebar: Control
 var confirm: Control
 var settings: Control
+var still: Control
 var daemon: Node
 var _off: ColorRect
 var _off_text: Label
@@ -54,6 +56,8 @@ func _ready() -> void:
 	settings.apps_path = apps_path
 	settings.state_path = state_path
 	add_child(settings)
+	still = StillOpen.new()
+	add_child(still)
 	sidebar = Sidebar.new(home)
 	add_child(sidebar)
 	confirm = Confirm.new()
@@ -63,6 +67,8 @@ func _ready() -> void:
 	state.changed.connect(_on_changed)
 	state.sidebar_focus_changed.connect(sidebar.set_focus)
 	state.confirm_focus_changed.connect(confirm.set_focus)
+	state.still_focus_changed.connect(still.set_focus)
+	state.force_close_confirmed.connect(func(): daemon.force_close(still.wids()))
 	settings.closed.connect(func(): state.go(State.Screen.HOME))
 	settings.apps_changed.connect(home.reload)
 	settings.prefs_changed.connect(apply_prefs)
@@ -74,6 +80,7 @@ func _ready() -> void:
 	daemon.show_home.connect(_on_show_home)
 	daemon.power_pressed.connect(_on_power_pressed)
 	daemon.memory_warning.connect(_on_memory_warning)
+	daemon.still_open.connect(_on_still_open)
 	print("session type: %s" % OS.get_environment("XDG_SESSION_TYPE"))
 	apply_prefs(Prefs.load_prefs(state_path))
 
@@ -86,6 +93,16 @@ func apply_prefs(p: Dictionary) -> void:
 	var im := get_node_or_null("/root/InputMode")
 	if im:
 		im.set_glyph_style(p.glyph_style)
+
+
+# Return to Bosca Mor ended with windows still open.
+func _on_still_open(apps: Array) -> void:
+	if apps.is_empty():
+		_on_show_home()
+		return
+	show_launcher()
+	still.open(apps)
+	state.show_still_open()
 
 
 func _on_memory_warning(app_id: String, mb: int) -> void:
@@ -184,6 +201,10 @@ func _unhandled_input(ev: InputEvent) -> void:
 				var b: int = confirm.button_at(ev.position)
 				if b >= 0:
 					state.set_confirm_focus(b)
+			elif s == State.Screen.STILL_OPEN:
+				var b: int = still.button_at(ev.position)
+				if b >= 0:
+					state.set_still_focus(b)
 		return
 	if ev is InputEventMouseButton and ev.is_action_pressed("accept"):
 		if s == State.Screen.SIDEBAR:
@@ -195,10 +216,13 @@ func _unhandled_input(ev: InputEvent) -> void:
 				state.go(State.Screen.HOME)
 			get_viewport().set_input_as_handled()
 			return
-		if s == State.Screen.CONFIRM:
-			var b: int = confirm.button_at(ev.position)
+		if s == State.Screen.CONFIRM or s == State.Screen.STILL_OPEN:
+			var b: int = (confirm if s == State.Screen.CONFIRM else still).button_at(ev.position)
 			if b >= 0:
-				state.set_confirm_focus(b)
+				if s == State.Screen.CONFIRM:
+					state.set_confirm_focus(b)
+				else:
+					state.set_still_focus(b)
 				state.handle("accept")
 			get_viewport().set_input_as_handled()
 			return
@@ -216,6 +240,9 @@ func _on_changed(to: State.Screen, from: State.Screen) -> void:
 		settings.open()
 	elif not (to == State.Screen.CONFIRM and from == State.Screen.SETTINGS):
 		settings.close()
+	# Still open stays under its force-close confirm.
+	if to != State.Screen.STILL_OPEN and not (to == State.Screen.CONFIRM and state.confirm_kind == "forceclose"):
+		still.close()
 	match to:
 		State.Screen.HOME:
 			sidebar.close(animate)
@@ -223,6 +250,7 @@ func _on_changed(to: State.Screen, from: State.Screen) -> void:
 			_off.visible = false
 			if from == State.Screen.DESKTOP:
 				show_launcher()
+				home.play_return()     # SPEC: Home with the return fade
 		State.Screen.SIDEBAR:
 			if not sidebar.has_capture():
 				sidebar.capture()
@@ -232,12 +260,22 @@ func _on_changed(to: State.Screen, from: State.Screen) -> void:
 			if from in [State.Screen.HOME, State.Screen.SETTINGS]:
 				sidebar.capture()     # ready for Back, which returns to the sidebar
 			sidebar.close(animate, true)
-			confirm.open(state.confirm_kind, animate)
+			confirm.open(state.confirm_kind, animate, still.apps.size())
+		State.Screen.STILL_OPEN:
+			confirm.close(animate)
+			sidebar.close(false)
 		State.Screen.DESKTOP:
 			sidebar.close(false)
 			confirm.close(false)
-			daemon.show_desktop()
+			var wids: Array = still.wids()
 			hide_launcher()
+			match state.desktop_reason:
+				"show_me":
+					daemon.show_window(wids[0] if wids else "")
+				"back":
+					daemon.back_to_desktop()
+				_:
+					daemon.show_desktop()
 		State.Screen.OFF:
 			sidebar.close(false)
 			confirm.close(false)

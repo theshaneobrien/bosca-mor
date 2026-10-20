@@ -282,3 +282,102 @@ func test_launch_failed_returns_home() -> void:
 	main.daemon.launch_failed.emit("jellyfin", "No such file")
 	check(not main.home.is_launching(), "back on Home")
 	_teardown()
+
+
+const STILL := [
+	{"wid": "0x3a00007", "name": "LibreOffice Writer", "icon": "", "asking": true},
+	{"wid": "0x4400002", "name": "Text Editor", "icon": "", "asking": false},
+]
+
+
+func _still() -> void:
+	main.state.run_item("desktop")
+	main.daemon.calls.clear()
+	main.daemon.still_open.emit(STILL)
+
+
+func test_still_open_screen() -> void:
+	await _setup()
+	_still()
+	eq(main.state.screen, S.STILL_OPEN, "Still open shown")
+	check(not main.is_hidden, "launcher back on screen")
+	eq(main.still.title(), "2 apps are still open", "title")
+	eq(main.state.still_focus, 0, "Show me focused")
+	_act("nav_left")
+	eq(main.state.still_focus, 0, "stops at the left")
+	_act("nav_right")
+	_act("nav_right")
+	_act("nav_right")
+	eq(main.state.still_focus, 2, "stops at the right")
+	_act("nav_up")
+	_act("menu")
+	eq(main.state.screen, S.STILL_OPEN, "Up and Menu do nothing")
+	_teardown()
+
+
+func test_show_me_raises_the_first_window() -> void:
+	await _setup()
+	_still()
+	_act("accept")
+	eq(main.state.screen, S.DESKTOP, "launcher hides")
+	check(main.is_hidden, "hidden")
+	eq(main.daemon.calls, [["show_window", "0x3a00007"]], "raise the first, no notification")
+	_teardown()
+
+
+func test_back_to_desktop_closes_nothing() -> void:
+	await _setup()
+	_still()
+	_act("back")
+	eq(main.state.screen, S.DESKTOP, "Back is Back to desktop")
+	eq(main.daemon.calls, [["back_to_desktop"]], "no force close, no notification")
+	_still()
+	main.state.set_still_focus(2)
+	_act("accept")
+	eq(main.daemon.calls, [["back_to_desktop"]], "the button too")
+	_teardown()
+
+
+func test_close_anyway_confirms_first() -> void:
+	await _setup()
+	_still()
+	_act("nav_right")
+	_act("accept")
+	eq(main.state.screen, S.CONFIRM, "confirm")
+	eq(main.state.confirm_kind, "forceclose", "force-close confirm")
+	eq(main.confirm.title(), "Close 2 apps?", "title counts the apps")
+	eq(main.state.confirm_focus, 0, "Cancel focused")
+	check(main.still.visible, "Still open stays underneath")
+	_act("accept")
+	eq(main.state.screen, S.STILL_OPEN, "Cancel returns to Still open")
+	eq(main.daemon.calls, [], "nothing closed")
+	_act("accept")
+	_act("back")
+	eq(main.state.screen, S.STILL_OPEN, "Back returns to Still open")
+	_act("accept")
+	_act("nav_right")
+	_act("accept")
+	eq(main.daemon.calls, [["force_close", "0x3a00007", "0x4400002"]], "xkill both, by window id")
+	eq(main.state.screen, S.HOME, "then Home")
+	check(not main.still.visible, "Still open gone")
+	_teardown()
+
+
+func test_one_app_still_open() -> void:
+	await _setup()
+	main.state.run_item("desktop")
+	main.daemon.still_open.emit([STILL[1]])
+	eq(main.still.title(), "1 app is still open", "singular")
+	main.state.set_still_focus(1)
+	_act("accept")
+	eq(main.confirm.title(), "Close 1 app?", "singular confirm")
+	_teardown()
+
+
+func test_return_with_nothing_left_shows_home() -> void:
+	await _setup()
+	main.state.run_item("desktop")
+	main.daemon.show_home.emit()
+	eq(main.state.screen, S.HOME, "Home")
+	check(main.home._fade.visible, "with the return fade")
+	_teardown()

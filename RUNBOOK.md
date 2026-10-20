@@ -11,7 +11,7 @@
 | 5 Daemon and IPC | done | 29 daemon tests (run in WSL on the dev machine) including the launcher round trip; 55 launcher tests |
 | 6 Idle behaviour | done | 63 launcher tests pass. Dev-machine numbers below; the J4105 budgets are still to measure |
 | 7 Settings and OSK | done | 76 launcher tests pass; Settings shot checked against Settings.dc.html |
-| 8 Return to Bosca Mór and icons | not started | |
+| 8 Return to Bosca Mór and icons | done | 88 launcher tests, 39 daemon tests (WSL). Still open shot checked against the design; inset SVG and full PNG checked in a dev shot with test logos |
 | 9 Installer | not started | |
 | 10 Jellyfin TV mode | deferred | do last, once the app is mostly built |
 
@@ -41,11 +41,15 @@ Hardware checks that sessions can't run. Tick them off after testing on the J410
 - [ ] Settings > Startup: turning it off stops the launcher opening at the next login (Cinnamon honours `X-GNOME-Autostart-enabled=false`). Needs the installer's autostart entry (step 7, after step 9).
 - [ ] Settings > About on the box: device name, the box's IP address, memory, and Session reads x11 (step 7).
 - [ ] If the TV crops the edges, Display > Screen size 95% or 90% brings everything inside (step 7).
+- [ ] Return to Bosca Mór: with Firefox (one tab) and a text editor holding unsaved text open, run the shortcut. Firefox closes; Still open lists the editor (step 8).
+- [ ] On Still open, Show me brings the editor's save prompt forward; the next Home runs Return again (step 8).
+- [ ] Close anyway asks first (Cancel focused) and then closes the editor with `xkill -id` (step 8).
+- [ ] Put a `full`-style PNG (600 px or more) and an SVG logo in `~/.config/boscamor/icons/`; both look sharp on a focused tile at 1080p, and Settings > Apps says "Drop-in icon" (step 8).
+- [ ] Replace the synthetic `daemon/tests/fixtures/xprop/` files with real `xprop` captures from the box, including the launcher's own window, so the skip list is checked against real WM_CLASS values (step 8).
 - [ ] Check the mouse: hover dwell, click to launch, wheel one tile per notch, cursor hides after 3 s (step 2).
 
 ## Deferred
 
-- [ ] Home with the desktop showing should run Return to Bosca Mór; the daemon only sends `show` for now (`return_from_desktop`). Step 8.
 - [ ] Toasts: launch failed, no window within 15 s, and the memory warning. The daemon events arrive (`launch_failed`, `memory_warning`) but the launcher only logs them; there is no toast UI yet, and no step names it.
 
 

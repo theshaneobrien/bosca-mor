@@ -1,0 +1,5 @@
+_NET_WM_WINDOW_TYPE(ATOM) = _NET_WM_WINDOW_TYPE_DIALOG
+WM_CLASS(STRING) = "libreoffice", "libreoffice-writer"
+_NET_WM_NAME(UTF8_STRING) = "Save Document?"
+WM_NAME(COMPOUND_TEXT) = "Save Document?"
+WM_TRANSIENT_FOR(WINDOW): window id # 0x3a00007

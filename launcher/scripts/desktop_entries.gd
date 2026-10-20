@@ -36,6 +36,8 @@ static func scan(folders: Array = []) -> Array:
 	var seen := {}
 	var out := []
 	for d in folders:
+		if not DirAccess.dir_exists_absolute(d):
+			continue
 		for f in DirAccess.get_files_at(d):
 			if not f.ends_with(".desktop") or seen.has(f):
 				continue

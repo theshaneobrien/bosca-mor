@@ -22,6 +22,7 @@ const Autostart := preload("res://scripts/autostart.gd")
 const SystemInfo := preload("res://scripts/system_info.gd")
 const HintBar := preload("res://scripts/hint_bar.gd")
 const OSK := preload("res://scripts/osk.gd")
+const IconResolver := preload("res://scripts/icon_resolver.gd")
 
 const SECTIONS := [
 	["apps", "Apps"], ["display", "Display"], ["network", "Network"], ["sound", "Sound"],
@@ -626,7 +627,14 @@ func _row(it: Dictionary, on: bool) -> Control:
 			tile.custom_minimum_size = Vector2(Tokens.ROW_TILE, Tokens.ROW_TILE)
 			tile.size_flags_vertical = SIZE_SHRINK_CENTER
 			tile.add_theme_stylebox_override("panel", UI.box(app.tint, Tokens.ROW_TILE_RADIUS))
-			var g := _icon(Glyphs.name_for(app), app.accent, Tokens.ROW_GLYPH, Tokens.ROW_GLYPH_STROKE)
+			var found := IconResolver.find(app)
+			var g: TextureRect
+			if found:
+				g = _icon("apps", app.accent, Tokens.ROW_GLYPH, Tokens.ROW_GLYPH_STROKE)
+				g.texture = IconResolver.texture(found.path, roundi(Tokens.ROW_TILE * Tokens.ICON_INSET * _scale), app.id + "-row")
+				g.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+			else:
+				g = _icon(Glyphs.name_for(app), app.accent, Tokens.ROW_GLYPH, Tokens.ROW_GLYPH_STROKE)
 			g.size_flags_horizontal = SIZE_SHRINK_CENTER
 			tile.add_child(g)
 			row.add_child(tile)
@@ -634,6 +642,11 @@ func _row(it: Dictionary, on: bool) -> Control:
 			title.size_flags_horizontal = SIZE_EXPAND_FILL
 			title.size_flags_vertical = SIZE_SHRINK_CENTER
 			row.add_child(title)
+			# Where the logo came from; the built-in glyph speaks for itself (D42).
+			if found:
+				var src := UI.label(IconResolver.source_label(found.source), Tokens.mono(400, Tokens.URL_FONT), Tokens.URL_FONT, Tokens.DIM)
+				src.size_flags_vertical = SIZE_SHRINK_CENTER
+				row.add_child(src)
 			if app.url_editable:
 				row.add_child(_url_button(app.url, on and col == 1))
 			row.add_child(_kind(app.kind))

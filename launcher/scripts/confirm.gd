@@ -10,6 +10,7 @@ const UI := preload("res://scripts/ui.gd")
 const COPY := {
 	"poweroff": {"title": "Power off this device?", "body": "Anything playing will stop.", "verb": "Power off", "glyph": "power"},
 	"restart": {"title": "Restart this device?", "body": "The launcher opens again once it is back.", "verb": "Restart", "glyph": "restart"},
+	"forceclose": {"title": "Close %d apps?", "one": "Close 1 app?", "body": "Unsaved work will be lost.", "verb": "Close anyway", "glyph": "close"},
 }
 
 var is_open := false
@@ -32,11 +33,12 @@ func _ready() -> void:
 	_scale = UI.display_scale(self)
 
 
-func open(k: String, animate: bool) -> void:
+## count: how many apps a force-close would close.
+func open(k: String, animate: bool, count := 0) -> void:
 	kind = k
 	var copy: Dictionary = COPY[k]
 	_icon.texture = Glyphs.texture(copy.glyph, Tokens.CORAL, Tokens.DIALOG_ICON, Tokens.STATUS_STROKE, _scale)
-	_title.text = copy.title
+	_title.text = copy.one if count == 1 and copy.has("one") else (copy.title % count if copy.title.contains("%d") else copy.title)
 	_body.text = copy.body
 	_buttons[1].get_node("Label").text = copy.verb
 	set_focus(0)

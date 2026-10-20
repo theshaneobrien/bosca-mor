@@ -22,6 +22,8 @@ signal launch_failed(app_id: String, error: String)
 signal power_pressed
 ## Memory stayed low; the launcher shows it the next time it appears.
 signal memory_warning(app_id: String, available_mb: int)
+## Return to Bosca Mor left these windows open: [{wid, name, icon, asking}].
+signal still_open(apps: Array)
 signal connected_changed(connected: bool)
 
 ## Seconds before the stand-in pretends an app exited or a power-off was a
@@ -74,6 +76,26 @@ func show_desktop() -> void:
 	_record(["show_desktop"])
 	_visible = false
 	_send({"cmd": "desktop"})
+
+
+## Show me: raise a window still open (the launcher has hidden).
+func show_window(wid: String) -> void:
+	_record(["show_window", wid])
+	_visible = false
+	_send({"cmd": "show_window", "wid": wid})
+
+
+## Close anyway, after the confirm. The daemon uses xkill -id per window.
+func force_close(wids: Array) -> void:
+	_record(["force_close"] + wids)
+	_send({"cmd": "force_close", "wids": wids})
+
+
+## Back to desktop: hide, close nothing, no notification this time.
+func back_to_desktop() -> void:
+	_record(["back_to_desktop"])
+	_visible = false
+	_send({"cmd": "desktop", "notify": false})
 
 
 ## Tells the daemon whether the launcher is on screen, so it knows whether
@@ -197,6 +219,9 @@ func _dispatch(msg: Dictionary) -> void:
 			app_exited.emit(str(msg.get("id", "")), int(msg.get("code", 0)))
 		"launch_failed":
 			launch_failed.emit(str(msg.get("id", "")), str(msg.get("error", "")))
+		"still_open":
+			var list = msg.get("apps", [])
+			still_open.emit(list if list is Array else [])
 		"memory_warning":
 			var app_id = msg.get("id")
 			memory_warning.emit("" if app_id == null else str(app_id), int(msg.get("available_mb", 0)))

@@ -21,6 +21,7 @@ const PATHS := {
 	"power": "M12 2v10M18.4 6.6a9 9 0 1 1-12.77.04",
 	"ps-cross": "M6 6l12 12M18 6L6 18",
 	"ps-triangle": "M12 4.5l8 14H4z",
+	"close": "M6 6l12 12M18 6L6 18",
 	"plus": "M12 5v14M5 12h14",
 	"grip": "M5 9h14M5 15h14",
 	"ps-circle": "M12 20a8 8 0 1 0 0-16a8 8 0 1 0 0 16",

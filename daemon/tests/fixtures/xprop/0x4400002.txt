@@ -1,0 +1,5 @@
+_NET_WM_WINDOW_TYPE:  not found.
+WM_CLASS(STRING) = "xed", "Xed"
+_NET_WM_NAME(UTF8_STRING) = "*Unsaved Document 1 \"notes\" - Text Editor"
+WM_NAME(STRING) = "*Unsaved Document 1 - Text Editor"
+WM_TRANSIENT_FOR:  not found.

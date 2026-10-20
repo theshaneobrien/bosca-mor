@@ -27,6 +27,7 @@ func _setup(token := "secret-token") -> void:
 	client.app_exited.connect(func(id, code): got.append(["app_exited", id, code]))
 	client.launch_failed.connect(func(id, e): got.append(["launch_failed", id, e]))
 	client.memory_warning.connect(func(id, mb): got.append(["memory_warning", id, mb]))
+	client.still_open.connect(func(apps): got.append(["still_open", apps]))
 	for i in 20:
 		client.poll()
 		if server.is_connection_available():
@@ -89,12 +90,18 @@ func test_commands_go_out() -> void:
 	client.power("restart")
 	client.show_desktop()
 	client.set_visible(true)
+	client.show_window("0x3a00007")
+	client.force_close(["0x3a00007", "0x4400002"])
+	client.back_to_desktop()
 	var lines := _lines().map(func(l): return JSON.parse_string(l))
 	eq(lines, [
 		{"cmd": "launch", "id": "browser", "argv": ["firefox", "https://example.org"], "keep_on_home": false},
 		{"cmd": "power", "action": "reboot"},
 		{"cmd": "desktop"},
 		{"cmd": "state", "visible": true},
+		{"cmd": "show_window", "wid": "0x3a00007"},
+		{"cmd": "force_close", "wids": ["0x3a00007", "0x4400002"]},
+		{"cmd": "desktop", "notify": false},
 	], "commands")
 	_teardown()
 
@@ -105,8 +112,10 @@ func test_events_come_in() -> void:
 	_say('{"evt":"power_confirm"}\nnot json\n{"evt":"app_exited","id":"plex","code":0}')
 	_say('{"evt":"launch_failed","id":"x","error":"nope"}')
 	_say('{"evt":"memory_warning","id":null,"available_mb":400}')
+	_say('{"evt":"still_open","apps":[{"wid":"0x3a00007","name":"Writer","icon":"","asking":true}]}')
 	eq(got, [["show_home"], ["power_pressed"], ["app_exited", "plex", 0],
-		["launch_failed", "x", "nope"], ["memory_warning", "", 400]], "events")
+		["launch_failed", "x", "nope"], ["memory_warning", "", 400],
+		["still_open", [{"wid": "0x3a00007", "name": "Writer", "icon": "", "asking": true}]]], "events")
 	_teardown()
 
 

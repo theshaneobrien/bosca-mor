@@ -34,6 +34,7 @@ const TILE_FOCUS_SCALE := 1.12
 const TILE_LABEL_GAP := 28          # design
 const GLYPH := 112                  # design
 const GLYPH_STROKE := 1.6           # design
+const ICON_INSET := 0.6             # SPEC: an inset logo is 60% of the tile
 const CAROUSEL_LEAD := 3            # design: row shifts once focus passes the fourth tile
 
 # Type sizes
@@ -169,6 +170,25 @@ const TILE_TINTS := {               # the default set's tint for each accent, fo
 	"#5fdcea": Color("#10262b"),
 	"#3cc4a8": Color("#0f2622"),
 }
+
+# Still open (design: Main.dc.html "stillopen" view)
+const STILL_WIDTH := 1040
+const STILL_TITLE := 72
+const STILL_TITLE_LINE := 1.05
+const STILL_BODY := 34
+const STILL_BODY_GAP := 20
+const STILL_LIST_GAP := 52
+const STILL_ROW := 104
+const STILL_ROW_PAD := 32
+const STILL_ROW_GAP := 12
+const STILL_ROW_SPACING := 28
+const STILL_ICON_BOX := 64
+const STILL_ICON_RADIUS := 16
+const STILL_ICON := 36
+const STILL_NAME := 32
+const STILL_STATUS := 26
+const STILL_BUTTONS_GAP := 56
+const STILL_BUTTON_FONT := 32
 
 # On-screen keyboard (D34: no design; built from the dialog and row tokens)
 const OSK_KEY := 84

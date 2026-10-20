@@ -1,0 +1,5 @@
+_NET_WM_WINDOW_TYPE(ATOM) = _NET_WM_WINDOW_TYPE_DESKTOP
+WM_CLASS(STRING) = "nemo-desktop", "Nemo-desktop"
+_NET_WM_NAME(UTF8_STRING) = "Desktop"
+WM_NAME(STRING) = "Desktop"
+WM_TRANSIENT_FOR:  not found.

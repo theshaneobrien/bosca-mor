@@ -1,0 +1,5 @@
+_NET_WM_WINDOW_TYPE(ATOM) = _NET_WM_WINDOW_TYPE_DOCK
+WM_CLASS(STRING) = "cinnamon", "Cinnamon"
+_NET_WM_NAME(UTF8_STRING) = "cinnamon"
+WM_NAME(STRING) = "cinnamon"
+WM_TRANSIENT_FOR:  not found.

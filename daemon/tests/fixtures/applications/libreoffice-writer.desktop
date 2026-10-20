@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=LibreOffice Writer
+Exec=libreoffice --writer %U
+Icon=libreoffice-writer
+StartupWMClass=libreoffice-writer
