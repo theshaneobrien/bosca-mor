@@ -12,8 +12,17 @@
 | 6 Idle behaviour | done | 63 launcher tests pass. Dev-machine numbers below; the J4105 budgets are still to measure |
 | 7 Settings and OSK | done | 76 launcher tests pass; Settings shot checked against Settings.dc.html |
 | 8 Return to Bosca Mór and icons | done | 88 launcher tests, 39 daemon tests (WSL). Still open shot checked against the design; inset SVG and full PNG checked in a dev shot with test logos |
-| 9 Installer | done | bash -n passes (no shellcheck on the dev machine); --dry-run lists every action and changed nothing; two runs into a scratch root in WSL with stand-in system tools: the second reported no changes |
+| 9 Installer | done | bash -n passes (no shellcheck on the dev machine); --dry-run lists every action and changed nothing; two runs into a scratch root in WSL with stand-in system tools: the second reported no changes. Linux export preset added (step 9 fix): `build/boscamor` is an x86_64 ELF with the PCK embedded and starts headless in WSL without script errors |
 | 10 Jellyfin TV mode | deferred | do last, once the app is mostly built |
+
+## Rebuilding the launcher
+
+`launcher/export_presets.cfg` has one preset, "Linux" (x86_64, PCK embedded, tests/ and tools/ left out). It needs Godot 4.7.2's export templates in `%APPDATA%/Godot/export_templates/4.7.2.stable`. After any launcher change, export again, then deploy or re-run the installer:
+
+```bash
+godot --headless --path launcher --export-release "Linux" ../build/boscamor
+BOX=user@host tools/deploy.sh
+```
 
 ## Pending on box (Chief)
 
@@ -64,10 +73,9 @@ Before it starts, open Firefox (one tab), LibreOffice Writer with unsaved text a
 - [ ] The installer found Cinnamon's `button-power` key and set it to `nothing`; pressing Power on the box (not the remote) does nothing on its own (step 9).
 - [ ] The "Return to the launcher" shortcut is on the desktop and in the menu, and runs on one click (step 9).
 - [ ] Check the mouse: hover dwell, click to launch, wheel one tile per notch, cursor hides after 3 s (step 2).
+- [ ] The exported `/opt/boscamor/boscamor` starts full screen on X11 after login and renders with the Compatibility renderer on the J4105's GPU (step 9 fix).
 
 ## Deferred
-
-- [ ] The Linux launcher export. No step builds `build/boscamor`: the project has no `export_presets.cfg`, and exporting needs Godot 4.7.2's export templates. Until then the installer warns "no launcher at /opt/boscamor/boscamor". Needs a Linux x86_64 preset with the PCK embedded (SPEC), then `tools/deploy.sh`.
 
 - [ ] Toasts: launch failed, no window within 15 s, and the memory warning. The daemon events arrive (`launch_failed`, `memory_warning`) but the launcher only logs them; there is no toast UI yet, and no step names it.
 
