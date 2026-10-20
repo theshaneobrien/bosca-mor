@@ -1,16 +1,16 @@
 # Finds each app's icon (SPEC Icons), first that exists:
 #   1. the `icon` path in apps.json
-#   2. a drop-in, ~/.config/boscamor/icons/<id>.svg or .png
+#   2. a drop-in, <id>.svg or .png in Paths.icons_dir()
 #   3. the icon the app installed: a flatpak's hicolor export (scalable SVG,
 #      then the largest PNG), or the theme icon named in a native app's
 #      .desktop file. Not for web tiles (a `url`): Netflix runs Firefox, but
 #      Firefox's logo isn't Netflix's (D41)
 #   4. none: the caller draws the built-in line glyph
 # SVGs are rasterised at the size they are drawn and cached under
-# ~/.cache/boscamor/icons/, redone when the file or the size changes.
+# Paths.icon_cache_dir(), redone when the file or the size changes.
 extends RefCounted
 
-const Apps := preload("res://scripts/apps.gd")
+const Paths := preload("res://scripts/paths.gd")
 const DesktopEntries := preload("res://scripts/desktop_entries.gd")
 
 ## Where each search looks. Tests point these at temp folders.
@@ -29,34 +29,23 @@ static func reset_entries() -> void:
 
 
 static func dropin_dir() -> String:
-	return roots.get("dropin", Apps.config_dir().path_join("icons"))
+	return roots.get("dropin", Paths.icons_dir())
 
 
 static func cache_dir() -> String:
-	if roots.has("cache"):
-		return roots.cache
-	var xdg := OS.get_environment("XDG_CACHE_HOME")
-	if xdg.is_empty():
-		xdg = Apps.home_dir().path_join(".cache")
-	return xdg.path_join("boscamor/icons")
+	return roots.get("cache", Paths.icon_cache_dir())
 
 
 static func flatpak_dirs() -> Array:
-	return roots.get("flatpak", [
-		"/var/lib/flatpak/exports/share/icons/hicolor",
-		Apps.home_dir().path_join(".local/share/flatpak/exports/share/icons/hicolor"),
-	])
+	return roots.get("flatpak", Paths.flatpak_icon_dirs())
 
 
 static func theme_dirs() -> Array:
-	return roots.get("themes", [
-		Apps.home_dir().path_join(".local/share/icons/hicolor"),
-		"/usr/share/icons/hicolor",
-	])
+	return roots.get("themes", Paths.theme_icon_dirs())
 
 
 static func pixmap_dirs() -> Array:
-	return roots.get("pixmaps", ["/usr/share/pixmaps"])
+	return roots.get("pixmaps", Paths.pixmap_dirs())
 
 
 ## The icon file for an app: {"path", "source"}, source being "apps.json",

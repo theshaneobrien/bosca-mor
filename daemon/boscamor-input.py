@@ -9,8 +9,10 @@ docs/SPEC.md "Companion daemon".
   boscamor-input.py                 run the daemon
   boscamor-input.py --fake-input    also read home/guide/super+home/power lines on stdin
   boscamor-input.py --return        ask the running daemon to return from the desktop
+  boscamor-input.py --dev-port N    dev machine: fixed port, prints BOSCAMOR_IPC=N:<token>
 
 BOSCAMOR_DRY_RUN=1 logs power actions instead of running them.
+BOSCAMOR_HOME moves every path under it (see paths()).
 BOSCAMOR_RUNTIME_DIR overrides where the port and token files go.
 """
 
@@ -66,13 +68,7 @@ SKIP_TYPES = {"DESKTOP", "DOCK", "NOTIFICATION", "SPLASH", "TOOLBAR", "MENU",
 # WM_CLASS values (either half) of windows that are part of the desktop or the launcher.
 SKIP_CLASSES = {"cinnamon", "nemo-desktop", "boscamor", "launcher"}
 WID = re.compile(r"^0x[0-9a-f]+$")
-APP_DIRS = [
-    os.path.expanduser("~/.local/share/applications"),
-    os.path.expanduser("~/.local/share/flatpak/exports/share/applications"),
-    "/var/lib/flatpak/exports/share/applications",
-    "/usr/local/share/applications",
-    "/usr/share/applications",
-]
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # for a relative BOSCAMOR_HOME
 POWER_COMMANDS = {
     "poweroff": ["systemctl", "poweroff"],
     "reboot": ["systemctl", "reboot"],
@@ -83,12 +79,55 @@ def dry_run():
     return os.environ.get("BOSCAMOR_DRY_RUN") == "1"
 
 
-def runtime_dir():
-    override = os.environ.get("BOSCAMOR_RUNTIME_DIR")
-    if override:
-        return override
-    base = os.environ.get("XDG_RUNTIME_DIR") or "/tmp/boscamor-%d" % os.getuid()
-    return os.path.join(base, "boscamor")
+def paths():
+    """The one place the daemon builds its paths (Law 13), mirroring the
+    launcher's paths.gd. XDG on the box; when BOSCAMOR_HOME is set, everything
+    of ours sits under it (relative values resolve against the repo root).
+    app_dirs are where other apps install .desktop files, so they never move."""
+    env = os.environ
+    home = os.path.expanduser("~")
+
+    def xdg(var, fallback):
+        return env.get(var) or os.path.join(home, fallback)
+
+    dev = env.get("BOSCAMOR_HOME", "").strip()
+    if dev:
+        dev = os.path.normpath(os.path.join(REPO, dev))  # join keeps an absolute dev
+        config = os.path.join(dev, "config")
+        p = {
+            "state_json": os.path.join(dev, "state", "state.json"),
+            "icon_cache": os.path.join(dev, "cache", "icons"),
+            "profiles": os.path.join(dev, "profiles"),
+            "autostart": os.path.join(dev, "autostart", "boscamor.desktop"),
+            "runtime": os.path.join(dev, "runtime"),
+        }
+    else:
+        config = os.path.join(xdg("XDG_CONFIG_HOME", ".config"), "boscamor")
+        run_base = env.get("XDG_RUNTIME_DIR") or "/tmp/boscamor-%d" % os.getuid()
+        p = {
+            "state_json": os.path.join(xdg("XDG_STATE_HOME", ".local/state"), "boscamor", "state.json"),
+            "icon_cache": os.path.join(xdg("XDG_CACHE_HOME", ".cache"), "boscamor", "icons"),
+            "profiles": os.path.join(home, ".local/share/boscamor/profiles"),
+            "autostart": os.path.join(xdg("XDG_CONFIG_HOME", ".config"), "autostart", "boscamor.desktop"),
+            "runtime": os.path.join(run_base, "boscamor"),
+        }
+    if env.get("BOSCAMOR_RUNTIME_DIR"):  # D29: tests give the daemon its own folder
+        p["runtime"] = env["BOSCAMOR_RUNTIME_DIR"]
+    data_home = xdg("XDG_DATA_HOME", ".local/share")
+    p.update({
+        "home": dev,
+        "config": config,
+        "apps_json": os.path.join(config, "apps.json"),
+        "icons": os.path.join(config, "icons"),
+        "app_dirs": [
+            os.path.join(data_home, "applications"),
+            os.path.join(data_home, "flatpak/exports/share/applications"),
+            "/var/lib/flatpak/exports/share/applications",
+            "/usr/local/share/applications",
+            "/usr/share/applications",
+        ],
+    })
+    return p
 
 
 # evdev ------------------------------------------------------------------------
@@ -237,8 +276,10 @@ class Client:
 
 
 class Daemon:
-    def __init__(self, runtime=None, proc_root="/proc", fake_input=False, evdev=True):
-        self.runtime = runtime or runtime_dir()
+    def __init__(self, runtime=None, proc_root="/proc", fake_input=False, evdev=True,
+                 dev_port=None):
+        self.runtime = runtime or paths()["runtime"]
+        self.dev_port = dev_port
         self.proc_root = proc_root
         self.fake_input = fake_input
         self.evdev = evdev
@@ -261,7 +302,7 @@ class Daemon:
         self.port = None
         self._denied = set()
         self.returning = None  # {"deadline", "next"} while closing desktop windows
-        self.app_dirs = APP_DIRS
+        self.app_dirs = paths()["app_dirs"]
 
     # Overridable for tests.
     def now(self):
@@ -292,7 +333,7 @@ class Daemon:
     def start(self):
         self.server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.server.bind(("127.0.0.1", 0))
+        self.server.bind(("127.0.0.1", self.dev_port or 0))
         self.server.listen(4)
         self.server.setblocking(False)
         self.port = self.server.getsockname()[1]
@@ -302,6 +343,9 @@ class Daemon:
             self.sel.register(sys.stdin, selectors.EVENT_READ, self._read_stdin)
         log.info("listening on 127.0.0.1:%d, runtime %s%s", self.port, self.runtime,
                  " (dry run)" if dry_run() else "")
+        if self.dev_port:
+            # SPEC "IPC", Dev override: the Windows launcher can't read our runtime dir.
+            print("BOSCAMOR_IPC=%d:%s" % (self.port, self.token), flush=True)
 
     def _write_runtime(self):
         os.makedirs(self.runtime, mode=0o700, exist_ok=True)
@@ -807,7 +851,7 @@ class Daemon:
 
 def send_return(runtime=None):
     """Asks the running daemon to start Return to Bosca Mor. Exit code 0 on success."""
-    runtime = runtime or runtime_dir()
+    runtime = runtime or paths()["runtime"]
     try:
         with open(os.path.join(runtime, "port")) as f:
             port = int(f.read())
@@ -828,11 +872,15 @@ def main(argv=None):
     p.add_argument("--no-evdev", action="store_true", help="do not read /dev/input")
     p.add_argument("--return", dest="ret", action="store_true",
                    help="ask the running daemon to return from the desktop, then exit")
+    p.add_argument("--dev-port", type=int, metavar="PORT",
+                   help="dev machine only: bind this fixed port and print BOSCAMOR_IPC=PORT:TOKEN")
     args = p.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     if args.ret:
         return send_return()
-    d = Daemon(fake_input=args.fake_input, evdev=not args.no_evdev)
+    if args.dev_port is not None and not 0 < args.dev_port < 65536:
+        p.error("--dev-port must be 1 to 65535")
+    d = Daemon(fake_input=args.fake_input, evdev=not args.no_evdev, dev_port=args.dev_port)
     d.start()
     d.install_signals()
     try:

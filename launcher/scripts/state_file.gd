@@ -3,13 +3,11 @@
 extends RefCounted
 
 const Apps := preload("res://scripts/apps.gd")
+const Paths := preload("res://scripts/paths.gd")
 
 
 static func default_path() -> String:
-	var xdg := OS.get_environment("XDG_STATE_HOME")
-	if xdg.is_empty():
-		xdg = Apps.home_dir().path_join(".local/state")
-	return xdg.path_join("boscamor/state.json")
+	return Paths.state_json()
 
 
 ## The state as a Dictionary; missing or unreadable gives {}.

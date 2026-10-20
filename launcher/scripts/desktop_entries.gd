@@ -3,7 +3,7 @@
 # escapes, and field codes (%u, %F and the rest) dropped.
 extends RefCounted
 
-const Apps := preload("res://scripts/apps.gd")
+const Paths := preload("res://scripts/paths.gd")
 
 const FIELD_CODES := ["%f", "%F", "%u", "%U", "%d", "%D", "%n", "%N", "%i", "%c", "%k", "%v", "%m"]
 const KINDS := {
@@ -15,17 +15,7 @@ const KINDS := {
 
 
 static func dirs() -> Array[String]:
-	var home := Apps.home_dir()
-	var data_home := OS.get_environment("XDG_DATA_HOME")
-	if data_home.is_empty():
-		data_home = home.path_join(".local/share")
-	return [
-		data_home.path_join("applications"),
-		data_home.path_join("flatpak/exports/share/applications"),
-		"/var/lib/flatpak/exports/share/applications",
-		"/usr/local/share/applications",
-		"/usr/share/applications",
-	]
+	return Paths.desktop_dirs()
 
 
 ## Every launchable entry, one per desktop file name (the first folder wins),

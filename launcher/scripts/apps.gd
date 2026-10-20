@@ -2,6 +2,8 @@
 # state.json. Saves go through a temp file and a rename.
 extends RefCounted
 
+const Paths := preload("res://scripts/paths.gd")
+
 const DEFAULT_PATH := "res://data/apps.default.json"
 const REQUIRED := ["id", "name", "kind", "description", "tint", "accent", "argv"]
 const OPTIONAL := {
@@ -15,28 +17,18 @@ const OPTIONAL := {
 }
 
 
-static func home_dir() -> String:
-	var h := OS.get_environment("HOME")
-	if h.is_empty():
-		h = OS.get_environment("USERPROFILE")
-	return h
-
-
-static func config_dir() -> String:
-	var xdg := OS.get_environment("XDG_CONFIG_HOME")
-	if xdg.is_empty():
-		xdg = home_dir().path_join(".config")
-	return xdg.path_join("boscamor")
-
-
-static func user_path() -> String:
-	return config_dir().path_join("apps.json")
-
-
 # The user's apps.json, or the bundled default when there is none yet.
 static func default_source() -> String:
-	var user := user_path()
+	var user := Paths.apps_json()
 	return user if FileAccess.file_exists(user) else DEFAULT_PATH
+
+
+## Under BOSCAMOR_HOME, the first run copies the default set into the dev
+## config, so Settings has a file to edit. On the box install.sh seeds it.
+static func seed_dev_home() -> bool:
+	if Paths.dev_home().is_empty() or FileAccess.file_exists(Paths.apps_json()):
+		return false
+	return write_atomic(Paths.apps_json(), FileAccess.get_file_as_string(DEFAULT_PATH)) == OK
 
 
 # Returns {"apps": Array[Dictionary], "errors": Array[String], "raw": {id:
@@ -139,7 +131,7 @@ static func _normalise(raw: Dictionary) -> Dictionary:
 		app[key] = v if typeof(v) == typeof(OPTIONAL[key]) else OPTIONAL[key]
 	app.tint = Color(app.tint)
 	app.accent = Color(app.accent)
-	var home := home_dir()
+	var home := Paths.user_home()
 	var argv: Array[String] = []
 	for a in raw.argv:
 		argv.append(_expand(a, home))
@@ -148,8 +140,10 @@ static func _normalise(raw: Dictionary) -> Dictionary:
 	return app
 
 
-# JSON has no "~", so default paths say /home/USER.
+# JSON has no "~", so default paths say /home/USER. Browser profiles go
+# through Paths, so BOSCAMOR_HOME moves them too.
 static func _expand(s: String, home: String) -> String:
+	s = s.replace(Paths.PROFILES_IN_CONFIG, Paths.profiles_dir())
 	if home.is_empty():
 		return s
 	return s.replace("/home/USER", home)

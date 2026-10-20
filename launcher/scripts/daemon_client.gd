@@ -1,12 +1,14 @@
 # The one way the launcher talks to boscamor-input: newline JSON over TCP on
 # 127.0.0.1, after a token line (SPEC "IPC"). It reads the port and token the
-# daemon writes to $XDG_RUNTIME_DIR/boscamor/, polls the socket from one
+# daemon writes to Paths.runtime_dir() (or BOSCAMOR_IPC on the Windows dev
+# machine), polls the socket from one
 # timer that keeps running while the tree is paused, and reconnects if the
 # daemon restarts. With no daemon (the dev machine), it stands in: it logs,
 # and pretends an app exited or a power-off was a dry run after stub_delay.
 extends Node
 
 const Apps := preload("res://scripts/apps.gd")
+const Paths := preload("res://scripts/paths.gd")
 
 const POLL_S := 0.1                 # SPEC Resource use: poll the socket every 100 ms
 const RETRY_S := 1.0
@@ -29,8 +31,8 @@ signal connected_changed(connected: bool)
 ## Seconds before the stand-in pretends an app exited or a power-off was a
 ## dry run. Below 0 it never does (tests).
 @export var stub_delay := 1.5
-## Where the port and token files are; empty uses BOSCAMOR_RUNTIME_DIR, then
-## $XDG_RUNTIME_DIR/boscamor.
+## Where the port and token files are. Empty uses BOSCAMOR_IPC if set, else
+## Paths.runtime_dir().
 @export var runtime_dir := ""
 
 var calls: Array = []
@@ -117,14 +119,35 @@ func _later(f: Callable) -> void:
 
 # Connection -------------------------------------------------------------------
 
-func _dir() -> String:
-	if not runtime_dir.is_empty():
-		return runtime_dir
-	var d := OS.get_environment("BOSCAMOR_RUNTIME_DIR")
-	if not d.is_empty():
-		return d
-	var xdg := OS.get_environment("XDG_RUNTIME_DIR")
-	return "" if xdg.is_empty() else xdg.path_join("boscamor")
+## BOSCAMOR_IPC=<port>:<token> as {port, token}, or {} if unset or malformed.
+## The Windows dev launcher uses it to reach the WSL2 daemon (SPEC "IPC").
+static func parse_ipc(value: String) -> Dictionary:
+	var i := value.find(":")
+	if i <= 0:
+		return {}
+	var port := value.left(i).strip_edges()
+	var token := value.substr(i + 1).strip_edges()
+	if not port.is_valid_int() or int(port) <= 0 or int(port) > 65535 or token.is_empty():
+		return {}
+	return {"port": int(port), "token": token}
+
+
+## Where to connect: {port, token}, or {} if there is no daemon to find. An
+## explicit runtime_dir (tests) wins, then BOSCAMOR_IPC, then the runtime files.
+func _endpoint() -> Dictionary:
+	var dir := runtime_dir
+	if dir.is_empty():
+		var ipc := parse_ipc(OS.get_environment("BOSCAMOR_IPC"))
+		if not ipc.is_empty():
+			return ipc
+		dir = Paths.runtime_dir()
+	if dir.is_empty():
+		return {}
+	var port := FileAccess.get_file_as_string(dir.path_join("port")).strip_edges()
+	var token := FileAccess.get_file_as_string(dir.path_join("token")).strip_edges()
+	if not port.is_valid_int() or token.is_empty():
+		return {}
+	return {"port": int(port), "token": token}
 
 
 ## Runs every POLL_S: connects, reads, and dispatches events.
@@ -151,15 +174,12 @@ func poll() -> void:
 
 
 func _connect() -> void:
-	var dir := _dir()
-	if dir.is_empty():
+	var ep := _endpoint()
+	if ep.is_empty():
 		return
-	var port := FileAccess.get_file_as_string(dir.path_join("port")).strip_edges()
-	_token = FileAccess.get_file_as_string(dir.path_join("token")).strip_edges()
-	if not port.is_valid_int() or _token.is_empty():
-		return
+	_token = ep.token
 	_peer = StreamPeerTCP.new()
-	if _peer.connect_to_host("127.0.0.1", int(port)) != OK:
+	if _peer.connect_to_host("127.0.0.1", ep.port) != OK:
 		_peer = null
 		return
 	_sent_token = false

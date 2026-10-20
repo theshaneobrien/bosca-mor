@@ -4,15 +4,13 @@
 extends RefCounted
 
 const Apps := preload("res://scripts/apps.gd")
+const Paths := preload("res://scripts/paths.gd")
 
 const KEY := "X-GNOME-Autostart-enabled"
 
 
 static func default_path() -> String:
-	var xdg := OS.get_environment("XDG_CONFIG_HOME")
-	if xdg.is_empty():
-		xdg = Apps.home_dir().path_join(".config")
-	return xdg.path_join("autostart/boscamor.desktop")
+	return Paths.autostart_file()
 
 
 static func installed(path := "") -> bool:

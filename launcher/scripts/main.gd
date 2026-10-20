@@ -15,6 +15,7 @@ const Motion := preload("res://scripts/motion.gd")
 const SettingsView := preload("res://scripts/settings.gd")
 const Prefs := preload("res://scripts/prefs.gd")
 const StillOpen := preload("res://scripts/still_open.gd")
+const Apps := preload("res://scripts/apps.gd")
 
 const OFF_TEXT := {"poweroff": "Shutting down", "restart": "Restarting"}
 
@@ -44,6 +45,8 @@ var _panel_running := false        # a Cinnamon settings panel opened from Setti
 func _ready() -> void:
 	set_anchors_preset(PRESET_FULL_RECT)
 	mouse_filter = MOUSE_FILTER_IGNORE
+	if apps_path.is_empty():
+		Apps.seed_dev_home()
 	daemon = DaemonClient.new()
 	daemon.name = "Daemon"
 	add_child(daemon)

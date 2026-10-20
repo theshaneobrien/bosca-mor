@@ -14,6 +14,7 @@
 | 8 Return to Bosca Mór and icons | done | 88 launcher tests, 39 daemon tests (WSL). Still open shot checked against the design; inset SVG and full PNG checked in a dev shot with test logos |
 | 9 Installer | done | bash -n passes (no shellcheck on the dev machine); --dry-run lists every action and changed nothing; two runs into a scratch root in WSL with stand-in system tools: the second reported no changes. Linux export preset added (step 9 fix): `build/boscamor` is an x86_64 ELF with the PCK embedded and starts headless in WSL without script errors |
 | 10 Jellyfin TV mode | done | Args from the upstream desktop file Flathub builds (D59), not yet read on the box; 90 launcher tests. Release v0.10.0 carries the Linux build |
+| 1 fix: paths helper and dev IPC | done | `launcher/scripts/paths.gd` and the daemon's `paths()` build every path and honour `BOSCAMOR_HOME` (layout in D60); `--dev-port` and `BOSCAMOR_IPC` added, and the launcher round trip now uses them. 99 launcher tests, 47 daemon tests (WSL). `BOSCAMOR_HOME=dev-home` seeds `dev-home/config/apps.json` on first run |
 
 ## Rebuilding the launcher
 
@@ -116,8 +117,6 @@ Before it starts, open Firefox (one tab), LibreOffice Writer with unsaved text a
     - process tracking through Job Objects instead of process groups.
 
   Keep this cheap by leaving every OS-specific call in the daemon and `paths.gd`, never in screen code.
-
-- [ ] Law 13 and the dev override, from origin's "Set up Windows plus WSL2 dev", arrived after steps 1 to 9 were built and the code does not follow them yet. Paths are built in `apps.gd`, `state_file.gd`, `icon_resolver.gd`, `autostart.gd`, `desktop_entries.gd` and the daemon's `runtime_dir()`, not one `paths.gd`; nothing reads `BOSCAMOR_HOME`; the daemon has no `--dev-port` and the launcher no `BOSCAMOR_IPC` (the integration test reaches the WSL daemon through `--runtime-dir` instead). Needs a fix session.
 
 ## Blocked
 

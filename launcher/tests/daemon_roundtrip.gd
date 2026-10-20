@@ -1,6 +1,6 @@
 # Integration check run by daemon/tests/test_integration.py: connect to a real
 # boscamor-input, launch a dummy app, wait for app_exited. Exit code 0 on success.
-# godot --headless --path launcher -s res://tests/daemon_roundtrip.gd -- --runtime-dir=DIR
+# BOSCAMOR_IPC=<port>:<token> godot --headless --path launcher -s res://tests/daemon_roundtrip.gd
 extends SceneTree
 
 const DaemonClient := preload("res://scripts/daemon_client.gd")
@@ -12,12 +12,12 @@ func _initialize() -> void:
 
 
 func _run() -> void:
-	var dir := ""
-	for a in OS.get_cmdline_user_args():
-		if a.begins_with("--runtime-dir="):
-			dir = a.substr(14)
+	var ipc := OS.get_environment("BOSCAMOR_IPC")
+	if DaemonClient.parse_ipc(ipc).is_empty():
+		printerr("roundtrip: BOSCAMOR_IPC unset or malformed: '%s'" % ipc)
+		quit(1)
+		return
 	var client := DaemonClient.new()
-	client.runtime_dir = dir
 	client.stub_delay = -1.0
 	root.add_child(client)
 	var exited := []
@@ -27,7 +27,7 @@ func _run() -> void:
 	while not client.connected and Time.get_ticks_msec() - start < TIMEOUT_MS:
 		await create_timer(0.1).timeout
 	if not client.connected:
-		printerr("roundtrip: never connected to the daemon in %s" % dir)
+		printerr("roundtrip: never connected to the daemon on port %d" % DaemonClient.parse_ipc(ipc).port)
 		quit(1)
 		return
 	client.set_visible(false)

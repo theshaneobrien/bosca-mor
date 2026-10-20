@@ -9,17 +9,26 @@ var dir: String
 var client: Node
 var conn: StreamPeerTCP
 var got := []
+var _env := {}                      # environment to put back in _teardown
 
 
-func _setup(token := "secret-token") -> void:
+## With ipc, the client finds the server through BOSCAMOR_IPC, and the
+## runtime files point somewhere else.
+func _setup(token := "secret-token", ipc := false) -> void:
 	server = TCPServer.new()
 	server.listen(0, "127.0.0.1")
 	dir = OS.get_cache_dir().path_join("boscamor-test-%d" % Time.get_ticks_usec())
 	DirAccess.make_dir_recursive_absolute(dir)
-	_write(dir.path_join("port"), str(server.get_local_port()))
-	_write(dir.path_join("token"), token)
+	_write(dir.path_join("port"), "1" if ipc else str(server.get_local_port()))
+	_write(dir.path_join("token"), "wrong-token" if ipc else token)
 	client = DaemonClient.new()
-	client.runtime_dir = dir
+	if ipc:
+		for v in ["BOSCAMOR_IPC", "BOSCAMOR_RUNTIME_DIR"]:
+			_env[v] = OS.get_environment(v) if OS.has_environment(v) else null
+		OS.set_environment("BOSCAMOR_IPC", "%d:%s" % [server.get_local_port(), token])
+		OS.set_environment("BOSCAMOR_RUNTIME_DIR", dir)
+	else:
+		client.runtime_dir = dir
 	client.stub_delay = -1.0
 	tree.root.add_child(client)
 	for s in ["show_home", "power_pressed"]:
@@ -38,6 +47,11 @@ func _setup(token := "secret-token") -> void:
 
 
 func _teardown() -> void:
+	for v in _env:
+		if _env[v] == null:
+			OS.unset_environment(v)
+		else:
+			OS.set_environment(v, _env[v])
 	client.free()
 	server.stop()
 	for f in ["port", "token"]:
@@ -80,6 +94,15 @@ func test_handshake_token_first_then_state() -> void:
 	var lines := _lines()
 	eq(lines[0], "secret-token", "token is the first line")
 	eq(JSON.parse_string(lines[1]), {"cmd": "state", "visible": true}, "then the state")
+	_teardown()
+
+
+func test_boscamor_ipc_wins_over_runtime_files() -> void:
+	_setup("ipc-token", true)
+	check(conn != null, "connected through BOSCAMOR_IPC")
+	check(client.connected, "client says connected")
+	if conn:
+		eq(_lines()[0], "ipc-token", "sent the BOSCAMOR_IPC token")
 	_teardown()
 
 

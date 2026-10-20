@@ -23,6 +23,7 @@ const SystemInfo := preload("res://scripts/system_info.gd")
 const HintBar := preload("res://scripts/hint_bar.gd")
 const OSK := preload("res://scripts/osk.gd")
 const IconResolver := preload("res://scripts/icon_resolver.gd")
+const Paths := preload("res://scripts/paths.gd")
 
 const SECTIONS := [
 	["apps", "Apps"], ["display", "Display"], ["network", "Network"], ["sound", "Sound"],
@@ -256,7 +257,7 @@ func _read_path() -> String:
 
 
 func _write_path() -> String:
-	return apps_path if apps_path and not apps_path.begins_with("res://") else Apps.user_path()
+	return apps_path if apps_path and not apps_path.begins_with("res://") else Paths.apps_json()
 
 
 func _load_apps() -> void:

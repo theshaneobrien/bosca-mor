@@ -1,4 +1,6 @@
+import contextlib
 import importlib.util
+import io
 import json
 import os
 import signal
@@ -368,6 +370,113 @@ class TestIPC(unittest.TestCase):
 
     def test_return_without_daemon(self):
         self.assertEqual(bi.send_return(tempfile.mkdtemp()), 1)
+
+
+def free_port():
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+class TestDevPort(unittest.TestCase):
+    def test_binds_the_fixed_port_and_prints_the_token(self):
+        port = free_port()
+        d = Recorder(dev_port=port)
+        out = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(out):
+                d.start()
+            self.assertEqual(d.port, port)
+            self.assertEqual(out.getvalue().strip(), "BOSCAMOR_IPC=%d:%s" % (port, d.token))
+            # A launcher with the printed token gets through.
+            s = socket.create_connection(("127.0.0.1", port), timeout=2)
+            s.sendall((d.token + '\n{"cmd":"state","visible":true}\n').encode())
+            self.assertTrue(d.pump(lambda: d.visible, timeout=2), "state never arrived")
+            s.close()
+        finally:
+            d.close()
+
+    def test_without_dev_port_nothing_is_printed(self):
+        d = Recorder()
+        out = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(out):
+                d.start()
+            self.assertEqual(out.getvalue(), "")
+            self.assertNotEqual(d.port, 0)
+        finally:
+            d.close()
+
+    def test_bad_dev_port_is_refused(self):
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            bi.main(["--dev-port", "70000", "--no-evdev"])
+
+
+class TestPaths(unittest.TestCase):
+    VARS = ("BOSCAMOR_HOME", "BOSCAMOR_RUNTIME_DIR", "HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME",
+            "XDG_CACHE_HOME", "XDG_DATA_HOME", "XDG_RUNTIME_DIR")
+
+    def env(self, **values):
+        patch = {v: values.get(v) for v in self.VARS}
+        saved = {v: os.environ.get(v) for v in self.VARS}
+        self.addCleanup(self._put, saved)
+        self._put(patch)
+
+    @staticmethod
+    def _put(values):
+        for k, v in values.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+    def test_xdg_without_boscamor_home(self):
+        self.env(HOME="/home/tv", XDG_CONFIG_HOME="/x/cfg", XDG_STATE_HOME="/x/state",
+                 XDG_CACHE_HOME="/x/cache", XDG_DATA_HOME="/x/data", XDG_RUNTIME_DIR="/run/user/1000")
+        p = bi.paths()
+        self.assertEqual(p["home"], "")
+        self.assertEqual(p["apps_json"], "/x/cfg/boscamor/apps.json")
+        self.assertEqual(p["state_json"], "/x/state/boscamor/state.json")
+        self.assertEqual(p["icons"], "/x/cfg/boscamor/icons")
+        self.assertEqual(p["icon_cache"], "/x/cache/boscamor/icons")
+        self.assertEqual(p["profiles"], "/home/tv/.local/share/boscamor/profiles")
+        self.assertEqual(p["autostart"], "/x/cfg/autostart/boscamor.desktop")
+        self.assertEqual(p["runtime"], "/run/user/1000/boscamor")
+        self.assertEqual(p["app_dirs"][0], "/x/data/applications")
+
+    def test_xdg_fallbacks(self):
+        self.env(HOME="/home/tv")
+        p = bi.paths()
+        self.assertEqual(p["apps_json"], "/home/tv/.config/boscamor/apps.json")
+        self.assertEqual(p["runtime"], "/tmp/boscamor-%d/boscamor" % os.getuid())
+        self.assertEqual(p["app_dirs"][:2], ["/home/tv/.local/share/applications",
+                                             "/home/tv/.local/share/flatpak/exports/share/applications"])
+
+    def test_everything_under_boscamor_home(self):
+        self.env(BOSCAMOR_HOME="/x/dev", HOME="/home/tv", XDG_CONFIG_HOME="/x/cfg",
+                 XDG_RUNTIME_DIR="/run/user/1000")
+        p = bi.paths()
+        self.assertEqual(p["home"], "/x/dev")
+        self.assertEqual(p["apps_json"], "/x/dev/config/apps.json")
+        self.assertEqual(p["state_json"], "/x/dev/state/state.json")
+        self.assertEqual(p["icons"], "/x/dev/config/icons")
+        self.assertEqual(p["icon_cache"], "/x/dev/cache/icons")
+        self.assertEqual(p["profiles"], "/x/dev/profiles")
+        self.assertEqual(p["autostart"], "/x/dev/autostart/boscamor.desktop")
+        self.assertEqual(p["runtime"], "/x/dev/runtime")
+        d = bi.Daemon(evdev=False)
+        self.addCleanup(d.close)
+        self.assertEqual(d.runtime, "/x/dev/runtime")
+
+    def test_relative_boscamor_home_is_under_the_repo(self):
+        self.env(BOSCAMOR_HOME="dev-home")
+        repo = os.path.normpath(os.path.join(HERE, "..", ".."))
+        self.assertEqual(bi.paths()["home"], os.path.join(repo, "dev-home"))
+        self.assertEqual(bi.paths()["runtime"], os.path.join(repo, "dev-home", "runtime"))
+
+    def test_runtime_dir_override_wins(self):
+        self.env(BOSCAMOR_HOME="/x/dev", BOSCAMOR_RUNTIME_DIR="/x/rt")
+        self.assertEqual(bi.paths()["runtime"], "/x/rt")
 
 
 if __name__ == "__main__":
