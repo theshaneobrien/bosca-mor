@@ -307,3 +307,18 @@ func test_debug_overlay() -> void:
 	_key(KEY_F12)
 	eq(im.overlay_text(), "", "F12 hides it")
 	_teardown()
+
+
+# Saved events must match any device: a second pad, or a keyboard Godot
+# numbers differently, has to work too.
+func test_actions_match_every_device() -> void:
+	for a in InputMap.get_actions():
+		if a.begins_with("ui_"):
+			continue
+		for ev in InputMap.action_get_events(a):
+			eq(ev.device, -1, "%s: %s" % [a, ev.as_text()])
+	var pad := InputEventJoypadButton.new()
+	pad.device = 2
+	pad.button_index = JOY_BUTTON_A
+	pad.pressed = true
+	check(pad.is_action_pressed("accept"), "third pad's A is accept")
