@@ -232,7 +232,7 @@ func _build() -> void:
 		(top if i < DIVIDER_AT else bottom).add_child(_item(ITEMS[i]))
 
 	col.add_child(UI.spacer(Tokens.SIDEBAR_FOOTER_GAP))
-	var hints := HintBar.new(["Select", "Back"], Tokens.SIDEBAR_HINT, Tokens.SIDEBAR_FOOTER_GAP, Tokens.SIDEBAR_HINT_KEY_GAP)
+	var hints := HintBar.new([["accept", "Select"], ["back", "Back"]], Tokens.SIDEBAR_HINT, Tokens.SIDEBAR_FOOTER_GAP, Tokens.SIDEBAR_HINT_KEY_GAP)
 	col.add_child(_inset(hints))
 
 

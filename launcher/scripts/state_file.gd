@@ -1,5 +1,5 @@
-# Reads state.json (state, not config). Writes come with the features that
-# change state, and go through a temp file and a rename.
+# Reads and writes state.json (state, not config). Writes go through a temp
+# file and a rename, and keep keys they don't know.
 extends RefCounted
 
 const Apps := preload("res://scripts/apps.gd")
@@ -23,3 +23,13 @@ static func load_file(path := "") -> Dictionary:
 		push_warning("state.json unreadable, using defaults: %s" % path)
 		return {}
 	return json.data
+
+
+## Merges `changes` into the state file and writes it atomically.
+static func update(changes: Dictionary, path := "") -> Error:
+	if path.is_empty():
+		path = default_path()
+	var data := load_file(path)
+	data.merge(changes, true)
+	return Apps.write_atomic(path, JSON.stringify(data, "  ") + "
+")

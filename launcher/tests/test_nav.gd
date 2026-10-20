@@ -25,7 +25,7 @@ const CELLS := [
 	[S.SIDEBAR, "nav_right", {"screen": S.SIDEBAR, "sidebar_focus": 1}],
 	[S.SIDEBAR, "nav_up", {"screen": S.SIDEBAR, "sidebar_focus": 0}],
 	[S.SIDEBAR, "nav_down", {"screen": S.SIDEBAR, "sidebar_focus": 2}],
-	[S.SIDEBAR, "accept", {"screen": S.SIDEBAR, "settings": true}],
+	[S.SIDEBAR, "accept", {"screen": S.SETTINGS}],
 	[S.SIDEBAR, "back", {"screen": S.HOME, "home_focus": 2}],
 	[S.SIDEBAR, "menu", {"screen": S.HOME, "home_focus": 2}],
 	[S.SIDEBAR, "home", {"screen": S.HOME, "home_focus": 2}],
@@ -53,7 +53,6 @@ func _setup() -> void:
 	tree.root.add_child(main)
 	main.animate = false
 	main.daemon.stub_delay = -1.0
-	main.state.settings_requested.connect(func(): settings_asked = true)
 	var im = tree.root.get_node_or_null("InputMode")
 	if im:
 		im._set_mode(InputModeScript.Mode.REMOTE)

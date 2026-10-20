@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Kodi
+Name[de]=Kodi DE
+Comment=Media centre
+Exec=kodi --standalone %U
+Icon=kodi
+Categories=AudioVideo;Video;Player;
+
+[Desktop Action fullscreen]
+Name=Other
+Exec=kodi --other

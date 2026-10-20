@@ -16,6 +16,8 @@ signal hints_changed(style: String)
 var mode := Mode.REMOTE
 var cursor_visible := false
 var pad_style := "xbox"
+## Settings > Controllers: "auto" follows the pad's name, or "xbox", "playstation".
+var glyph_style := "auto"
 ## Tests set this to drive time by hand; -1 uses the real clock.
 var fake_now_ms := -1
 
@@ -47,7 +49,16 @@ func now_ms() -> int:
 
 
 func hint_style() -> String:
-	return "remote" if _focus_mode == Mode.REMOTE else pad_style
+	if _focus_mode == Mode.REMOTE:
+		return "remote"
+	return pad_style if glyph_style == "auto" else glyph_style
+
+
+func set_glyph_style(s: String) -> void:
+	var old := hint_style()
+	glyph_style = s
+	if hint_style() != old:
+		hints_changed.emit(hint_style())
 
 
 static func style_for_pad(pad_name: String) -> String:

@@ -12,6 +12,8 @@ const Confirm := preload("res://scripts/confirm.gd")
 const DaemonClient := preload("res://scripts/daemon_client.gd")
 const InputModeScript := preload("res://scripts/input_mode.gd")
 const Motion := preload("res://scripts/motion.gd")
+const SettingsView := preload("res://scripts/settings.gd")
+const Prefs := preload("res://scripts/prefs.gd")
 
 const OFF_TEXT := {"poweroff": "Shutting down", "restart": "Restarting"}
 
@@ -25,6 +27,7 @@ var state := State.new()
 var home: Control
 var sidebar: Control
 var confirm: Control
+var settings: Control
 var daemon: Node
 var _off: ColorRect
 var _off_text: Label
@@ -33,6 +36,7 @@ var _window_mode := Window.MODE_WINDOWED
 ## the tree paused, with only the daemon poll timer running.
 var is_hidden := false
 var _shown_sleep_usec := 0
+var _panel_running := false        # a Cinnamon settings panel opened from Settings
 
 
 func _ready() -> void:
@@ -46,6 +50,10 @@ func _ready() -> void:
 	home.apps_path = apps_path
 	home.state_path = state_path
 	add_child(home)
+	settings = SettingsView.new()
+	settings.apps_path = apps_path
+	settings.state_path = state_path
+	add_child(settings)
 	sidebar = Sidebar.new(home)
 	add_child(sidebar)
 	confirm = Confirm.new()
@@ -55,20 +63,50 @@ func _ready() -> void:
 	state.changed.connect(_on_changed)
 	state.sidebar_focus_changed.connect(sidebar.set_focus)
 	state.confirm_focus_changed.connect(confirm.set_focus)
-	state.settings_requested.connect(func(): print("Settings arrives in step 7"))
+	settings.closed.connect(func(): state.go(State.Screen.HOME))
+	settings.apps_changed.connect(home.reload)
+	settings.prefs_changed.connect(apply_prefs)
+	settings.launch_panel.connect(_launch_panel)
 	home.launch_requested.connect(daemon.launch)
 	home.launch_faded.connect(hide_launcher)
 	daemon.app_exited.connect(_on_app_exited)
 	daemon.launch_failed.connect(_on_launch_failed)
 	daemon.show_home.connect(_on_show_home)
 	daemon.power_pressed.connect(_on_power_pressed)
-	daemon.memory_warning.connect(func(app_id, mb): print("memory low: %d MB available (%s)" % [mb, app_id]))
+	daemon.memory_warning.connect(_on_memory_warning)
+	print("session type: %s" % OS.get_environment("XDG_SESSION_TYPE"))
+	apply_prefs(Prefs.load_prefs(state_path))
+
+
+## Reduce motion, screen size and button names, from Settings or state.json.
+func apply_prefs(p: Dictionary) -> void:
+	Motion.reduce = p.reduce_motion
+	pivot_offset = Vector2(Tokens.BASE_SIZE) / 2.0
+	scale = Vector2.ONE * p.ui_scale
+	var im := get_node_or_null("/root/InputMode")
+	if im:
+		im.set_glyph_style(p.glyph_style)
+
+
+func _on_memory_warning(app_id: String, mb: int) -> void:
+	var note := "%d MB free%s" % [mb, " while %s ran" % app_id if app_id else ""]
+	print("memory low: " + note)
+	settings.memory_note = note
+
+
+func _launch_panel(app: Dictionary) -> void:
+	_panel_running = true
+	daemon.launch(app)
+	hide_launcher()
 
 
 # Daemon events ----------------------------------------------------------------
 
 func _on_app_exited(_app_id: String, _code: int) -> void:
-	if home.is_launching():
+	if _panel_running:
+		_panel_running = false
+		show_launcher()
+	elif home.is_launching():
 		show_launcher()
 		home.play_return()
 
@@ -81,10 +119,11 @@ func _on_launch_failed(app_id: String, error: String) -> void:
 
 # Home or Guide while hidden. An app with keep_on_home is still running.
 func _on_show_home() -> void:
+	_panel_running = false
 	show_launcher()
 	if home.is_launching():
 		home.play_return()
-	if state.screen == State.Screen.DESKTOP or state.screen == State.Screen.OFF:
+	if state.screen in [State.Screen.DESKTOP, State.Screen.OFF, State.Screen.SETTINGS]:
 		state.show_home()
 
 
@@ -172,6 +211,11 @@ func _unhandled_input(ev: InputEvent) -> void:
 
 func _on_changed(to: State.Screen, from: State.Screen) -> void:
 	home.accepting_input = to == State.Screen.HOME
+	settings.accepting_input = to == State.Screen.SETTINGS
+	if to == State.Screen.SETTINGS:
+		settings.open()
+	elif not (to == State.Screen.CONFIRM and from == State.Screen.SETTINGS):
+		settings.close()
 	match to:
 		State.Screen.HOME:
 			sidebar.close(animate)
@@ -185,7 +229,7 @@ func _on_changed(to: State.Screen, from: State.Screen) -> void:
 			confirm.close(animate)
 			sidebar.open(animate)
 		State.Screen.CONFIRM:
-			if from == State.Screen.HOME:
+			if from in [State.Screen.HOME, State.Screen.SETTINGS]:
 				sidebar.capture()     # ready for Back, which returns to the sidebar
 			sidebar.close(animate, true)
 			confirm.open(state.confirm_kind, animate)

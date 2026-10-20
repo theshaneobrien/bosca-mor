@@ -10,7 +10,7 @@
 | 4 Sidebar, power, desktop | done | 48 launcher tests pass; every Home, Sidebar and Power confirm cell of the navigation table is a test case. Menu and power shots checked against the design |
 | 5 Daemon and IPC | done | 29 daemon tests (run in WSL on the dev machine) including the launcher round trip; 55 launcher tests |
 | 6 Idle behaviour | done | 63 launcher tests pass. Dev-machine numbers below; the J4105 budgets are still to measure |
-| 7 Settings and OSK | not started | |
+| 7 Settings and OSK | done | 76 launcher tests pass; Settings shot checked against Settings.dc.html |
 | 8 Return to Bosca Mór and icons | not started | |
 | 9 Installer | not started | |
 | 10 Jellyfin TV mode | deferred | do last, once the app is mostly built |
@@ -36,6 +36,11 @@ Hardware checks that sessions can't run. Tick them off after testing on the J410
 - [ ] Launch Netflix (Firefox kiosk), press Home: every Firefox process of that profile ends, `pgrep -f profiles/netflix` is empty (step 5).
 - [ ] Measure every row of SPEC "Budgets on the J4105" (step 6): `pidstat -p <launcher pid> 5` for 60 s on idle Home (under 1% of a core, RSS under 150 MB) and with an app in front (under 0.5%); the daemon's pid the same way (under 0.5%, under 20 MB RSS); `intel_gpu_top` shows no GPU work while idle. If hidden misses 0.5%, SPEC says switch to quitting the launcher on launch.
 - [ ] Check the Wi-Fi icon on the box: shown when connected, struck through when not, gone if the box has no wireless interface (step 6).
+- [ ] Settings changes survive a reboot: hide an app, move one, change the Browser start page, add an app from the list, set Screen size and Reduce motion; reboot; all still there (step 7).
+- [ ] Settings > Network and Sound open Cinnamon's panels (`cinnamon-settings network`, `cinnamon-settings sound`) and the launcher comes back when they close (step 7).
+- [ ] Settings > Startup: turning it off stops the launcher opening at the next login (Cinnamon honours `X-GNOME-Autostart-enabled=false`). Needs the installer's autostart entry (step 7, after step 9).
+- [ ] Settings > About on the box: device name, the box's IP address, memory, and Session reads x11 (step 7).
+- [ ] If the TV crops the edges, Display > Screen size 95% or 90% brings everything inside (step 7).
 - [ ] Check the mouse: hover dwell, click to launch, wheel one tile per notch, cursor hides after 3 s (step 2).
 
 ## Deferred
@@ -43,7 +48,6 @@ Hardware checks that sessions can't run. Tick them off after testing on the J410
 - [ ] Home with the desktop showing should run Return to Bosca Mór; the daemon only sends `show` for now (`return_from_desktop`). Step 8.
 - [ ] Toasts: launch failed, no window within 15 s, and the memory warning. The daemon events arrive (`launch_failed`, `memory_warning`) but the launcher only logs them; there is no toast UI yet, and no step names it.
 
-- [ ] The Settings column of the navigation table, and the sidebar's Settings item (it only emits `settings_requested` for now). Both come with the Settings screen in step 7.
 
 - [ ] Jellyfin TV fullscreen Exec args. Run `grep -B2 -A3 -i tv /var/lib/flatpak/exports/share/applications/org.jellyfin.JellyfinDesktop*.desktop` on the box, then do step 10.
 

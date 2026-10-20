@@ -1,7 +1,8 @@
 # Renders a named screen state to PNG at any output size, scaled from the
 # 1920x1080 base the same way canvas_items stretch scales the window.
 # godot --path launcher -s res://tools/shot.gd -- --state=home --size=1920x1080 --out=../shots/home.png
-# States: home, menu (as Menu.dc.html), power and restart (as Power.dc.html).
+# States: home, menu (as Menu.dc.html), power and restart (as Power.dc.html),
+# settings (as Settings.dc.html; --section=N --row=N pick another), osk.
 # Options: --focus=N (focused tile), --item=N (sidebar item), --apps=PATH
 # (apps.json to use), --hints=remote|xbox|playstation (hint key style)
 extends SceneTree
@@ -9,9 +10,9 @@ extends SceneTree
 const Tokens := preload("res://theme/tokens.gd")
 const MainScene := preload("res://scenes/main.tscn")
 const InputModeScript := preload("res://scripts/input_mode.gd")
-const STATES := ["home", "menu", "power", "restart"]
+const STATES := ["home", "menu", "power", "restart", "settings", "osk"]
 # Defaults that match the design references.
-const FOCUS := {"home": 0, "menu": 2, "power": 0, "restart": 0}
+const FOCUS := {"home": 0, "menu": 2, "power": 0, "restart": 0, "settings": 0, "osk": 0}
 
 
 func _initialize() -> void:
@@ -19,7 +20,7 @@ func _initialize() -> void:
 
 
 func _shoot() -> void:
-	var opts := {"state": "home", "size": "1920x1080", "out": "", "focus": "", "item": "1", "apps": "", "hints": ""}
+	var opts := {"state": "home", "size": "1920x1080", "out": "", "focus": "", "item": "1", "apps": "", "hints": "", "section": "0", "row": "6"}
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--") and a.contains("="):
 			var kv := a.substr(2).split("=", true, 1)
@@ -60,6 +61,16 @@ func _shoot() -> void:
 			main.state.set_sidebar_focus(int(opts.item))
 		"power", "restart":
 			main.state.ask("poweroff" if opts.state == "power" else "restart")
+		"settings", "osk":
+			main.state.go(main.State.Screen.SETTINGS)
+			var st = main.settings
+			st.section = int(opts.section)
+			st._enter()
+			st.item = int(opts.row) if st.section == 0 else 0
+			if opts.state == "osk":
+				st.col = 1
+				st._accept()
+			st._render()
 	await _frames()
 
 	var out: String = opts.out if opts.out else "../shots/%s.png" % opts.state

@@ -1,6 +1,6 @@
-# A row of hints, each a key pill and a word. The first key is accept, the
-# second back. Key labels follow InputMode: the remote and keyboard share
-# "OK" and "Back"; pads get their face buttons.
+# A row of hints, each a key pill and a word, given as [action, word] pairs.
+# Key labels follow InputMode: the remote and keyboard share "OK", "Back" and
+# "Menu"; pads get their face buttons.
 extends HBoxContainer
 
 const Tokens := preload("res://theme/tokens.gd")
@@ -8,20 +8,24 @@ const Glyphs := preload("res://scripts/glyphs.gd")
 const UI := preload("res://scripts/ui.gd")
 
 const KEYS := {
-	"remote": ["OK", "Back"],
-	"xbox": ["A", "B"],
-	"playstation": ["ps-cross", "ps-circle"],
+	"remote": {"accept": "OK", "back": "Back", "move": "Menu"},
+	"xbox": {"accept": "A", "back": "B", "move": "Y"},
+	"playstation": {"accept": "ps-cross", "back": "ps-circle", "move": "ps-triangle"},
 }
 
 var style := "remote"
+var _hints: Array = []
+var _text_size: int
+var _key_gap: int
 var _keys: Array[PanelContainer] = []
 var _scale := 1.0
 
 
-func _init(words: Array, text_size: int, gap: int, key_gap: int) -> void:
+func _init(hints: Array, text_size: int, gap: int, key_gap: int) -> void:
+	_text_size = text_size
+	_key_gap = key_gap
 	add_theme_constant_override("separation", gap)
-	for w in words:
-		add_child(_hint(w, text_size, key_gap))
+	set_hints(hints)
 
 
 func _ready() -> void:
@@ -34,21 +38,42 @@ func _ready() -> void:
 	_fill()
 
 
+func set_hints(hints: Array) -> void:
+	if hints == _hints:
+		return
+	_hints = hints.duplicate()
+	for c in get_children():
+		c.queue_free()
+		remove_child(c)
+	_keys.clear()
+	for h in hints:
+		add_child(_hint(h[0], h[1]))
+	UI.ignore_mouse(self)
+	if is_inside_tree():
+		_fill()
+
+
 func set_style(s: String) -> void:
 	style = s if KEYS.has(s) else "remote"
 	_fill()
 
 
+## The key labels shown, in order.
 func labels() -> Array:
-	return KEYS[style]
+	return _hints.map(func(h): return KEYS[style][h[0]])
 
 
-func _hint(word: String, text_size: int, key_gap: int) -> Control:
+func words() -> Array:
+	return _hints.map(func(h): return h[1])
+
+
+func _hint(action: String, word: String) -> Control:
 	var h := HBoxContainer.new()
-	h.add_theme_constant_override("separation", key_gap)
+	h.add_theme_constant_override("separation", _key_gap)
 	var pill := PanelContainer.new()
 	pill.custom_minimum_size = Vector2(Tokens.KEY, Tokens.KEY)
 	pill.size_flags_vertical = SIZE_SHRINK_CENTER
+	pill.set_meta("action", action)
 	var k := UI.label("", Tokens.mono(500, Tokens.KEY_FONT), Tokens.KEY_FONT, Tokens.TEXT)
 	k.name = "Text"
 	k.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -64,17 +89,16 @@ func _hint(word: String, text_size: int, key_gap: int) -> Control:
 	pill.add_child(g)
 	_keys.append(pill)
 	h.add_child(pill)
-	var t := UI.label(word, Tokens.sans(400, text_size), text_size, Tokens.MUTED)
+	var t := UI.label(word, Tokens.sans(400, _text_size), _text_size, Tokens.MUTED)
 	t.size_flags_vertical = SIZE_SHRINK_CENTER
 	h.add_child(t)
 	return h
 
 
 func _fill() -> void:
-	var keys: Array = KEYS[style]
 	var glyphs := style == "playstation"
-	for i in _keys.size():
-		var pill := _keys[i]
+	for pill in _keys:
+		var key: String = KEYS[style][pill.get_meta("action")]
 		var sb := UI.box(Tokens.KEY_BG, Tokens.KEY / 2)
 		if style == "remote":
 			sb.content_margin_left = Tokens.KEY_PAD_KEYBOARD
@@ -85,9 +109,9 @@ func _fill() -> void:
 		text.visible = not glyphs
 		g.visible = glyphs
 		if glyphs:
-			g.texture = Glyphs.texture(keys[i], Tokens.TEXT, Tokens.KEY_FONT, Tokens.STATUS_STROKE, _scale)
+			g.texture = Glyphs.texture(key, Tokens.TEXT, Tokens.KEY_FONT, Tokens.STATUS_STROKE, _scale)
 		else:
-			text.text = keys[i]
+			text.text = key
 
 
 func _on_size_changed() -> void:

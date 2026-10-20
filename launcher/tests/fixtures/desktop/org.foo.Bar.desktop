@@ -1,0 +1,5 @@
+[Desktop Entry]
+Type=Application
+Name=Bar Game
+Exec=/usr/bin/flatpak run --branch=stable "--command=bar game" org.foo.Bar %f "100%%"
+Categories=Game;

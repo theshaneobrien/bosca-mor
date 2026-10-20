@@ -135,6 +135,28 @@ func _unhandled_input(ev: InputEvent) -> void:
 	get_viewport().set_input_as_handled()
 
 
+## Reads apps.json again after Settings changed it, keeping the focused app.
+func reload() -> void:
+	var keep: String = apps[focus].id if not apps.is_empty() else ""
+	var loaded := Apps.load_file(apps_path)
+	apps = Apps.visible(loaded.apps)
+	for c in _strip.get_children():
+		_strip.remove_child(c)
+		c.queue_free()
+	tiles.clear()
+	_tile_on.clear()
+	for app in apps:
+		_strip.add_child(_build_tile(app))
+	UI.ignore_mouse(_strip)
+	_raster_glyphs()
+	var at := 0
+	for i in apps.size():
+		if apps[i].id == keep:
+			at = i
+	focus = at
+	set_focus(at, false)
+
+
 ## Moves focus by one tile; at the ends the row nudges and stays.
 func move(step: int) -> void:
 	var to := focus + step
@@ -431,7 +453,7 @@ func _ring(node_name: String, inset: int, color: Color, width: int) -> Panel:
 
 
 func _build_hints() -> Control:
-	_hints = HintBar.new(["Open", "Menu"], Tokens.HINT, Tokens.HINT_GAP, Tokens.HINT_KEY_GAP)
+	_hints = HintBar.new([["accept", "Open"], ["back", "Menu"]], Tokens.HINT, Tokens.HINT_GAP, Tokens.HINT_KEY_GAP)
 	_hints.alignment = BoxContainer.ALIGNMENT_END
 	return _margin(_hints)
 

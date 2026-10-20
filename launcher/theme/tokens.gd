@@ -114,6 +114,69 @@ const BUTTON_BORDER_WIDTH := 2
 # Power-off screen (design)
 const OFF_TEXT := 32
 
+# Settings (design: Settings.dc.html)
+const SETTINGS_TITLE := 60
+const TRACK_TITLE := -0.02
+const SETTINGS_HINT_GAP := 44
+const SETTINGS_BODY_GAP := 48
+const SETTINGS_COL_GAP := 64
+const NAV_WIDTH := 400
+const NAV_ITEM := 76
+const NAV_ITEM_GAP := 6
+const NAV_ITEM_PAD := 28
+const NAV_ITEM_FONT := 30
+const SECTION_TITLE := 44
+const SECTION_TITLE_LINE := 1.1
+const SECTION_SUB := 28
+const SECTION_SUB_GAP := 10
+const ADD_BUTTON := 72
+const ADD_BUTTON_PAD := 32
+const ADD_BUTTON_RADIUS := 18
+const ADD_ICON := 28
+const ADD_ICON_GAP := 14
+const ADD_ICON_STROKE := 2.2
+const LIST_TOP := 32
+const ROW := 64
+const ROW_GAP := 4
+const ROW_PAD_LEFT := 20
+const ROW_PAD_RIGHT := 28
+const ROW_RADIUS := 16
+const ROW_SPACING := 24
+const ROW_RING := 3
+const ROW_FOCUS_BG := Color("#1c1c2a")
+const GRIP := Color("#6c6c86")
+const GRIP_ICON := 28
+const ROW_TILE := 46
+const ROW_TILE_RADIUS := 12
+const ROW_GLYPH := 32
+const ROW_GLYPH_STROKE := 1.8
+const ROW_FONT := 28
+const URL_BUTTON := 44
+const URL_PAD := 18
+const URL_RADIUS := 12
+const URL_FONT := 20
+const URL_GAP := 16
+const KIND_FONT := 22
+const TRACK_KIND := 0.1
+const TOGGLE_W := 76
+const TOGGLE_H := 42
+const TOGGLE_PAD := 5
+const TOGGLE_KNOB := 32
+const TOGGLE_GAP := 24
+const TILE_TINTS := {               # the default set's tint for each accent, for added apps
+	"#ff7a6b": Color("#2d1719"),
+	"#ffc94d": Color("#2b2513"),
+	"#5fdcea": Color("#10262b"),
+	"#3cc4a8": Color("#0f2622"),
+}
+
+# On-screen keyboard (D34: no design; built from the dialog and row tokens)
+const OSK_KEY := 84
+const OSK_KEY_H := 72
+const OSK_KEY_GAP := 10
+const OSK_FONT := 30
+const OSK_FIELD := 80
+
 # Motion: seconds
 const T_TILE_FOCUS := 0.160
 const T_CAROUSEL := 0.220

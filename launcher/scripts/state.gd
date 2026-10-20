@@ -1,15 +1,15 @@
 # The screen state machine. The navigation table from SPEC "Screens and
 # navigation" is the TABLE below; Home's own moves and launches stay in Home.
-# The Settings column arrives with the Settings screen in step 7.
 extends RefCounted
 
-enum Screen { HOME, SIDEBAR, CONFIRM, DESKTOP, OFF }
+enum Screen { HOME, SIDEBAR, CONFIRM, DESKTOP, OFF, SETTINGS }
 
 const ITEMS := ["home", "settings", "desktop", "restart", "poweroff"]
 const ACTIONS := ["nav_left", "nav_right", "nav_up", "nav_down", "accept", "back", "menu", "home", "power"]
 
 # screen -> action -> step. "" consumes the action and does nothing; an
-# action that is missing is left for the screen itself (Home's moves).
+# action that is missing is left for the screen itself (Home's moves,
+# Settings' moves, accept and back).
 const TABLE := {
 	Screen.HOME: {
 		"nav_up": "", "nav_down": "",
@@ -24,6 +24,7 @@ const TABLE := {
 		"nav_left": "confirm_left", "nav_right": "confirm_right", "nav_up": "", "nav_down": "",
 		"accept": "confirm_run", "back": "to_sidebar", "menu": "", "home": "close_all", "power": "",
 	},
+	Screen.SETTINGS: {"menu": "", "home": "close_all", "power": "ask_poweroff"},
 	Screen.DESKTOP: {},
 	Screen.OFF: {},
 }
@@ -31,7 +32,6 @@ const TABLE := {
 signal changed(screen: Screen, from: Screen)
 signal sidebar_focus_changed(i: int)
 signal confirm_focus_changed(i: int)
-signal settings_requested
 
 var screen := Screen.HOME
 var sidebar_focus := 0
@@ -80,7 +80,7 @@ func set_confirm_focus(i: int) -> void:
 func run_item(item: String) -> void:
 	match item:
 		"home": go(Screen.HOME)
-		"settings": settings_requested.emit()
+		"settings": go(Screen.SETTINGS)
 		"desktop": go(Screen.DESKTOP)
 		"restart": ask("restart")
 		"poweroff": ask("poweroff")
