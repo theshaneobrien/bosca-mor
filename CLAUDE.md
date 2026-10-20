@@ -63,3 +63,6 @@ BOX=user@host tools/deploy.sh                                 # rsync build + da
 ## Pitfalls
 
 Add one line here only when something cost real time. Keep this file under 120 lines.
+
+- Fresh clone: run `godot --headless --path launcher --import` once before tests or shots, or fonts won't load. New fonts need `multichannel_signed_distance_field=true` in their `.import`, then import again.
+- Never use a variable font with MSDF: overlapping contours render with artifacts (D15).

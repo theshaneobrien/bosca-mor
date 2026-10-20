@@ -17,3 +17,5 @@ One line of context per entry. Add new ones at the bottom with the next number, 
 | D11 | The G20S voice button does nothing | Chief's call |
 | D12 | Brand logos are never committed | Trademarks; they go in `~/.config/boscamor/icons/` on the box |
 | D13 | Jellyfin uses the flatpak's TV fullscreen entry; args deferred to step 10 | The four start-menu entries exist, but their Exec lines haven't been read yet |
+| D14 | Home layout values not in the SPEC tables (paddings, gaps, top bar and hint sizes, `#d6d6e0` status text, `#2a2a3c` key pill) are tokens taken from `Main.dc.html` | The SPEC tables cover the main tokens only; the design canvas holds the rest |
+| D15 | DM Sans ships as the static 24pt and 40pt optical-size cuts (googlefonts/dm-fonts), not the variable font; sizes 32 px and up use 40pt | MSDF draws the variable font's overlapping contours with visible artifacts |

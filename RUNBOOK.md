@@ -4,7 +4,7 @@
 
 | Step | Status | Notes |
 | --- | --- | --- |
-| 1 Skeleton | not started | |
+| 1 Skeleton | done | Godot 4.7.2. 11 launcher tests pass; home shots at 1080p, 720p and 4K checked against Main.dc.html |
 | 2 Input layer | not started | |
 | 3 Motion | not started | |
 | 4 Sidebar, power, desktop | not started | |

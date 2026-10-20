@@ -1,0 +1,8 @@
+[
+  {"id":"ok","name":"OK","kind":"Other","description":"Fine","tint":"#10262b","accent":"#5fdcea","argv":["true"]},
+  {"id":"noargv","name":"No argv","kind":"Other","description":"Missing argv","tint":"#10262b","accent":"#5fdcea"},
+  {"id":"badtint","name":"Bad tint","kind":"Other","description":"Not a colour","tint":"blue-ish","accent":"#5fdcea","argv":["true"]},
+  "not an object",
+  {"id":"ok","name":"Duplicate","kind":"Other","description":"Same id","tint":"#10262b","accent":"#5fdcea","argv":["true"]},
+  {"id":"ok2","name":"OK 2","kind":"Other","description":"Fine","tint":"#10262b","accent":"#5fdcea","argv":["true"],"keep_on_home":"yes"}
+]
