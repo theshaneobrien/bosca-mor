@@ -52,9 +52,43 @@ func _ready() -> void:
 	state.confirm_focus_changed.connect(confirm.set_focus)
 	state.settings_requested.connect(func(): print("Settings arrives in step 7"))
 	home.launch_requested.connect(daemon.launch)
-	daemon.app_exited.connect(func(_id): if home.is_launching(): home.play_return())
-	daemon.show_home.connect(state.show_home)
-	daemon.power_pressed.connect(func(): state.handle("power"))
+	home.launch_faded.connect(daemon.set_visible.bind(false))
+	daemon.app_exited.connect(_on_app_exited)
+	daemon.launch_failed.connect(_on_launch_failed)
+	daemon.show_home.connect(_on_show_home)
+	daemon.power_pressed.connect(_on_power_pressed)
+	daemon.memory_warning.connect(func(app_id, mb): print("memory low: %d MB available (%s)" % [mb, app_id]))
+
+
+# Daemon events ----------------------------------------------------------------
+
+func _on_app_exited(_app_id: String, _code: int) -> void:
+	if home.is_launching():
+		home.play_return()
+		daemon.set_visible(true)
+
+
+# The toast naming the app comes later; for now the launcher just comes back.
+func _on_launch_failed(app_id: String, error: String) -> void:
+	push_warning("could not start %s: %s" % [app_id, error])
+	_on_app_exited(app_id, -1)
+
+
+func _on_show_home() -> void:
+	if state.screen == State.Screen.DESKTOP or state.screen == State.Screen.OFF:
+		state.show_home()
+	daemon.set_visible(true)
+
+
+# Power from the daemon shows the launcher and opens the confirm, whatever
+# was on screen (SPEC: "Power, in any state").
+func _on_power_pressed() -> void:
+	if home.is_launching():
+		home.play_return()
+	if state.screen in [State.Screen.DESKTOP, State.Screen.OFF]:
+		state.show_home()
+	state.handle("power")
+	daemon.set_visible(true)
 
 
 func _unhandled_input(ev: InputEvent) -> void:
@@ -105,6 +139,8 @@ func _on_changed(to: State.Screen, from: State.Screen) -> void:
 			_off.visible = false
 			if from == State.Screen.DESKTOP:
 				_restore_window()
+			if from in [State.Screen.DESKTOP, State.Screen.OFF]:
+				daemon.set_visible(true)
 		State.Screen.SIDEBAR:
 			if not sidebar.has_capture():
 				sidebar.capture()

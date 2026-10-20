@@ -71,6 +71,14 @@ static func parse(text: String) -> Dictionary:
 	return {"apps": apps, "errors": errors}
 
 
+## The argv to run: a "{url}" element becomes the app's url.
+static func argv_for(app: Dictionary) -> Array[String]:
+	var out: Array[String] = []
+	for a in app.argv:
+		out.append(app.get("url", "") if a == "{url}" else a)
+	return out
+
+
 static func visible(apps: Array) -> Array:
 	return apps.filter(func(a): return not a.hidden)
 

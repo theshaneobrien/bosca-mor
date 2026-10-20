@@ -256,7 +256,30 @@ func test_launch_routes_to_daemon_and_returns() -> void:
 	check(main.home.is_launching(), "launching")
 	_act("back")
 	eq(main.state.screen, S.HOME, "no sidebar while launching")
-	main.daemon.app_exited.emit("jellyfin")
+	main.daemon.app_exited.emit("jellyfin", 0)
 	check(not main.home.is_launching(), "back from the app")
 	eq(main.home.focus, 2, "same tile")
+	_teardown()
+
+
+func test_daemon_power_shows_launcher_over_anything() -> void:
+	await _setup()
+	_start(S.SIDEBAR)
+	main.state.run_item("desktop")
+	main.daemon.power_pressed.emit()
+	eq(main.state.screen, S.CONFIRM, "from Desktop")
+	_start(S.HOME)
+	_act("accept")
+	main.daemon.power_pressed.emit()
+	check(not main.home.is_launching(), "launch fade undone")
+	eq(main.state.screen, S.CONFIRM, "from a launch")
+	_teardown()
+
+
+func test_launch_failed_returns_home() -> void:
+	await _setup()
+	_start(S.HOME)
+	_act("accept")
+	main.daemon.launch_failed.emit("jellyfin", "No such file")
+	check(not main.home.is_launching(), "back on Home")
 	_teardown()

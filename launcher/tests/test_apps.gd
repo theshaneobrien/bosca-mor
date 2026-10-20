@@ -53,3 +53,13 @@ func test_user_expanded() -> void:
 func test_hidden_filtered() -> void:
 	var r := Apps.parse('[{"id":"a","name":"A","kind":"Web","description":"d","tint":"#000000","accent":"#ffffff","argv":["a"],"hidden":true},{"id":"b","name":"B","kind":"Web","description":"d","tint":"#000000","accent":"#ffffff","argv":["b"]}]')
 	eq(Apps.visible(r.apps).map(func(a): return a.id), ["b"], "visible")
+
+
+func test_url_filled_into_argv() -> void:
+	var r := Apps.load_file(Apps.DEFAULT_PATH)
+	var browser: Dictionary = r.apps.filter(func(a): return a.id == "browser")[0]
+	var argv := Apps.argv_for(browser)
+	eq(argv[argv.size() - 1], "https://www.google.com", "{url} replaced")
+	eq(argv[0], "firefox", "rest kept")
+	var plex: Dictionary = r.apps.filter(func(a): return a.id == "plex")[0]
+	eq(Apps.argv_for(plex), ["flatpak", "run", "tv.plex.PlexHTPC"], "no url")

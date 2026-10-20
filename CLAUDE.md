@@ -66,3 +66,4 @@ Add one line here only when something cost real time. Keep this file under 120 l
 
 - Fresh clone: run `godot --headless --path launcher --import` once before tests or shots, or fonts won't load. New fonts need `multichannel_signed_distance_field=true` in their `.import`, then import again.
 - Never use a variable font with MSDF: overlapping contours render with artifacts (D15).
+- The dev machine is Windows; the daemon and its tests need Linux. Run them in WSL: `wsl.exe -d Ubuntu -- bash -lc 'cd /mnt/c/Users/shane/dev/bosca-mor && BOSCAMOR_GODOT=/mnt/c/Users/shane/Desktop/Godot_v4.7.2-stable_win64_console.exe python3 -m unittest discover -s daemon/tests'`. The Windows Godot reaches the WSL daemon over localhost.

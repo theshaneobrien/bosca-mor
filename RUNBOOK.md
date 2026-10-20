@@ -8,7 +8,7 @@
 | 2 Input layer | done | 27 launcher tests pass (16 new input tests); hint styles checked in shots |
 | 3 Motion | done | 36 launcher tests pass. Home tweens built; sidebar, confirm and blur tweens are defined in motion.gd and get wired in step 4 |
 | 4 Sidebar, power, desktop | done | 48 launcher tests pass; every Home, Sidebar and Power confirm cell of the navigation table is a test case. Menu and power shots checked against the design |
-| 5 Daemon and IPC | not started | parallel track, after step 1 |
+| 5 Daemon and IPC | done | 29 daemon tests (run in WSL on the dev machine) including the launcher round trip; 55 launcher tests |
 | 6 Idle behaviour | not started | |
 | 7 Settings and OSK | not started | |
 | 8 Return to Bosca Mór and icons | not started | |
@@ -28,9 +28,18 @@ Hardware checks that sessions can't run. Tick them off after testing on the J410
 - [ ] Check the motion feel on the TV: tile focus overshoot, carousel glide, hero rise, end nudge, launch fade (step 3). Felt good on the dev machine.
 - [ ] Open and close the sidebar a few times: the slide, the blur and the Home scale should hold 60 fps on the UHD 600 (step 4).
 - [ ] Power key on the remote, then Power off in the confirm: with `BOSCAMOR_DRY_RUN=1` the daemon logs and the launcher comes back to Home (step 4, needs step 5).
+- [ ] Launch Plex, press Home on the remote: Plex exits and the launcher is back within 500 ms (step 5).
+- [ ] Press the remote's power key with an app open and with the launcher showing: the confirm opens and nothing shuts down (step 5).
+- [ ] With the daemon running, `journalctl --user -u boscamor-input` lists the G20S, the pad and the Power Button under "watching". If the G20S Home key is not `KEY_HOMEPAGE` (172), add its code to `WATCHED_KEYS` in the daemon (step 5).
+- [ ] Replace `daemon/tests/fixtures/proc_bus_input_devices.txt` with `cat /proc/bus/input/devices` from the box (step 5).
+- [ ] Check `xprop` on the launcher window: its title must be exactly "Launcher" for the daemon's `wmctrl -F -a` raise fallback (step 5).
+- [ ] Launch Netflix (Firefox kiosk), press Home: every Firefox process of that profile ends, `pgrep -f profiles/netflix` is empty (step 5).
 - [ ] Check the mouse: hover dwell, click to launch, wheel one tile per notch, cursor hides after 3 s (step 2).
 
 ## Deferred
+
+- [ ] Home with the desktop showing should run Return to Bosca Mór; the daemon only sends `show` for now (`return_from_desktop`). Step 8.
+- [ ] Toasts: launch failed, no window within 15 s, and the memory warning. The daemon events arrive (`launch_failed`, `memory_warning`) but the launcher only logs them; there is no toast UI yet, and no step names it.
 
 - [ ] The Settings column of the navigation table, and the sidebar's Settings item (it only emits `settings_requested` for now). Both come with the Settings screen in step 7.
 
