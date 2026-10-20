@@ -25,6 +25,7 @@ A full-screen 10-foot app launcher for thin x86 Linux boxes (Dell Wyse J4105, Li
 10. UI copy: plain words, no em-dashes.
 11. Brand logos are never committed. They live in `~/.config/boscamor/icons/` on the box.
 12. Never run `sudo`, `systemctl poweroff/reboot`, or anything that changes the dev machine's system config. The daemon's power and kill paths honour `BOSCAMOR_DRY_RUN=1` (log instead of act), and tests always set it.
+13. Every config, state, cache, icon and profile path goes through one helper (`launcher/scripts/paths.gd`, `paths()` in the daemon) that honours `BOSCAMOR_HOME`. No other code builds these paths.
 
 ## Layout
 
@@ -59,7 +60,18 @@ BOX=user@host tools/deploy.sh                                 # rsync build + da
 tools/box-report.sh --all                                     # on the box: collect what dev sessions need (.tar.gz)
 ```
 
-`shots/` is gitignored. Compare screenshots against `docs/design/*.dc.html`. Those files are reference markup: tokens and layout are in their inline styles, and computed styles are in the `renderVals()` script at the bottom. They are not code to port.
+## Dev machine: Windows plus WSL2
+
+Development happens on Windows, and the Wyse is only a test target.
+
+- **Launcher:** run Godot natively on Windows. `godot` on PATH is the console build.
+- **Daemon:** Linux-only (evdev, process groups, X11 tools), so run it and its tests in WSL2. Prefix those commands with `wsl`, for example `wsl python3 -m unittest discover -s daemon/tests`.
+- **Dev paths:** set `BOSCAMOR_HOME=dev-home` (gitignored, in the repo) so config, state and cache land there instead of `~/.config`.
+- **Windows launcher to WSL2 daemon:** start the daemon with `wsl python3 daemon/boscamor-input.py --fake-input --dev-port 47800`. It prints its token. Then run the launcher with `BOSCAMOR_IPC=47800:<token>`. WSL2 forwards localhost.
+- **Shipping to the box:** `godot --headless --path launcher --export-release "Linux" ../build/boscamor`, then `wsl env BOX=user@host tools/deploy.sh`.
+- **Linux-only behaviour** (`xprop`, `wmctrl`, `xkill`, `/proc`, evdev) is tested against recorded fixtures under WSL2. The real thing runs in box check batches.
+
+`shots/` and `dev-home/` are gitignored. Compare screenshots against `docs/design/*.dc.html`. Those files are reference markup: tokens and layout are in their inline styles, and computed styles are in the `renderVals()` script at the bottom. They are not code to port.
 
 ## Pitfalls
 

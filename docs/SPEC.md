@@ -21,6 +21,7 @@ Bosca Mór (Irish for "big box") is a full-screen 10-foot app launcher for thin 
 - No user accounts or config sync.
 - No voice control. The G20S microphone is ignored.
 - No compositor of its own. It runs inside the existing desktop session.
+- No Windows build yet. That comes after Linux v1 works on the box, and is tracked in RUNBOOK.md.
 
 ## Target hardware, OS and session
 
@@ -280,6 +281,8 @@ These are targets. Check them with `pidstat -p <pid> 5` for CPU and `intel_gpu_t
 
 **IPC.** Godot 4 has no Unix-socket API, so the two talk over TCP on `127.0.0.1`. On start the daemon binds a random port and writes the port and a random 32-byte token to `$XDG_RUNTIME_DIR/boscamor/` (directory mode 0700). The launcher reads both. The first line on every connection must be the token; anything else is dropped. Messages are newline-delimited JSON.
 
+**Dev override.** On the Windows dev machine the launcher can't read the WSL2 daemon's runtime dir. In that case, `boscamor-input --dev-port <port>` binds that fixed port on 127.0.0.1 and prints its token. The launcher reads `BOSCAMOR_IPC=<port>:<token>` from the environment in preference to the runtime files. Neither is used on the box.
+
 | Direction | Message | Meaning |
 | --- | --- | --- |
 | Launcher to daemon | `{"cmd":"state","visible":true}` | Sent on every show or hide, so the daemon knows whether to act on Home |
@@ -295,7 +298,7 @@ These are targets. Check them with `pidstat -p <pid> 5` for CPU and `intel_gpu_t
 
 ## App config and launching
 
-The app list is `~/.config/boscamor/apps.json`. Carousel order is array order. Settings › Apps edits this file; it is also fine to hand-edit. Last-focused app and similar state go in a separate `~/.local/state/boscamor/state.json`, never in the config.
+The app list is `~/.config/boscamor/apps.json`. Carousel order is array order. Settings › Apps edits this file; it is also fine to hand-edit. Last-focused app and similar state go in a separate `~/.local/state/boscamor/state.json`, never in the config. Every path here (config, state, cache, icons, browser profiles) resolves through one helper. When `BOSCAMOR_HOME` is set, they all sit under it instead, which is how the Windows dev machine keeps them inside the repo's `dev-home/`.
 
 | Field | Type | Required | Meaning |
 | --- | --- | --- | --- |

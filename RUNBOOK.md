@@ -24,6 +24,17 @@ godot --headless --path launcher --export-release "Linux" ../build/boscamor
 BOX=user@host tools/deploy.sh
 ```
 
+## Dev setup (Windows, once)
+
+- [ ] Godot 4 stable, console build, on PATH as `godot`
+- [x] Godot Linux export templates installed, matching that version (4.7.2)
+- [ ] WSL2 with Ubuntu: `sudo apt install python3 rsync openssh-client shellcheck x11-utils wmctrl`
+- [ ] SSH key from WSL2 to the Wyse, so deploys don't prompt
+
+## Box check batches
+
+A after step 4, B after step 6, C after step 9 (see docs/PROMPTS.md).
+
 ## Pending on box (Chief)
 
 Hardware checks that sessions can't run. Tick them off after testing on the J4105.
@@ -81,6 +92,17 @@ Before it starts, open Firefox (one tab), LibreOffice Writer with unsaved text a
 
 
 - [ ] Jellyfin TV fullscreen Exec args. Run `grep -B2 -A3 -i tv /var/lib/flatpak/exports/share/applications/org.jellyfin.JellyfinDesktop*.desktop` on the box, then do step 10.
+
+- [ ] Windows build of the launcher, after Linux v1 works on the box. Godot already exports for Windows; the work is mostly a Windows counterpart to the daemon:
+    - global Home and Power keys through `RegisterHotKey` or a low-level keyboard hook (ctypes, still stdlib);
+    - Guide via XInput;
+    - polite close with `WM_CLOSE`;
+    - power through `shutdown /s` and `/r`;
+    - process tracking through Job Objects instead of process groups.
+
+  Keep this cheap by leaving every OS-specific call in the daemon and `paths.gd`, never in screen code.
+
+- [ ] Law 13 and the dev override, from origin's "Set up Windows plus WSL2 dev", arrived after steps 1 to 9 were built and the code does not follow them yet. Paths are built in `apps.gd`, `state_file.gd`, `icon_resolver.gd`, `autostart.gd`, `desktop_entries.gd` and the daemon's `runtime_dir()`, not one `paths.gd`; nothing reads `BOSCAMOR_HOME`; the daemon has no `--dev-port` and the launcher no `BOSCAMOR_IPC` (the integration test reaches the WSL daemon through `--runtime-dir` instead). Needs a fix session.
 
 ## Blocked
 

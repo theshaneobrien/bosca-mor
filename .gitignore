@@ -10,6 +10,7 @@ __pycache__/
 # Local output
 shots/
 build/
+dev-home/
 
 # Brand logos never go in the repo (D12)
 /icons/

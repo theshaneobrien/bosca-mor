@@ -3,6 +3,11 @@
     "allow": [
       "Bash(godot:*)",
       "Bash(godot4:*)",
+      "Bash(wsl python3:*)",
+      "Bash(wsl bash -n:*)",
+      "Bash(wsl shellcheck:*)",
+      "Bash(wsl install/install.sh --dry-run:*)",
+      "Bash(wsl env BOSCAMOR_DRY_RUN=1:*)",
       "Bash(python3:*)",
       "Bash(bash -n:*)",
       "Bash(shellcheck:*)",
@@ -19,6 +24,10 @@
     ],
     "deny": [
       "Bash(sudo:*)",
+      "Bash(wsl sudo:*)",
+      "Bash(wsl -u root:*)",
+      "Bash(wsl --unregister:*)",
+      "Bash(wsl --shutdown:*)",
       "Bash(systemctl poweroff:*)",
       "Bash(systemctl reboot:*)",
       "Bash(poweroff:*)",
