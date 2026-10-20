@@ -21,6 +21,7 @@ Bosca Mór (Irish for "big box") is a full-screen 10-foot app launcher for thin 
 - No user accounts or config sync.
 - No voice control. The G20S microphone is ignored.
 - No compositor of its own. It runs inside the existing desktop session.
+- No Windows build yet. That comes after Linux v1 works on the box, and is tracked in RUNBOOK.md.
 
 ## Target hardware, OS and session
 

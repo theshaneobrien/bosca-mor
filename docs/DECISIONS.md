@@ -19,3 +19,4 @@ One line of context per entry. Add new ones at the bottom with the next number, 
 | D13 | Jellyfin uses the flatpak's TV fullscreen entry; args deferred to step 10 | The four start-menu entries exist, but their Exec lines haven't been read yet |
 | D14 | Dev on Windows (native Godot) plus WSL2 (daemon, installer); the Wyse only runs box checks, in three batches | Chief's Linux machines are low-power; Godot cross-exports Linux builds from Windows |
 | D15 | `BOSCAMOR_HOME` and `BOSCAMOR_IPC` / `--dev-port` dev overrides | Keep dev files inside the repo, and let the Windows launcher reach the WSL2 daemon |
+| D16 | A Windows build comes after Linux v1 works; OS-specific calls stay in the daemon and `paths.gd` | Chief wants one eventually; keeping screens OS-agnostic makes the port a daemon job, not a rewrite |

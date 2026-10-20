@@ -36,6 +36,15 @@ Hardware checks that sessions can't run. Tick them off after testing on the J410
 
 - [ ] Jellyfin TV fullscreen Exec args. Run `grep -B2 -A3 -i tv /var/lib/flatpak/exports/share/applications/org.jellyfin.JellyfinDesktop*.desktop` on the box, then do step 10.
 
+- [ ] Windows build of the launcher, after Linux v1 works on the box. Godot already exports for Windows; the work is mostly a Windows counterpart to the daemon:
+    - global Home and Power keys through `RegisterHotKey` or a low-level keyboard hook (ctypes, still stdlib);
+    - Guide via XInput;
+    - polite close with `WM_CLOSE`;
+    - power through `shutdown /s` and `/r`;
+    - process tracking through Job Objects instead of process groups.
+
+  Keep this cheap by leaving every OS-specific call in the daemon and `paths.gd`, never in screen code.
+
 ## Blocked
 
 Nothing yet.
