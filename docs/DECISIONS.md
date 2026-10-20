@@ -62,3 +62,4 @@ One line of context per entry. Add new ones at the bottom with the next number, 
 | D56 | `BOSCAMOR_HOME` and `BOSCAMOR_IPC` / `--dev-port` dev overrides | Keep dev files inside the repo, and let the Windows launcher reach the WSL2 daemon |
 | D57 | A Windows build comes after Linux v1 works; OS-specific calls stay in the daemon and `paths.gd` | Chief wants one eventually; keeping screens OS-agnostic makes the port a daemon job, not a rewrite |
 | D58 | D55 to D57 were first numbered D14 to D16 on origin, written alongside steps 1 to 9; they moved to the end on merge | The code already cites the D14 to D54 written here |
+| D59 | Jellyfin's argv is `flatpak run org.jellyfin.JellyfinDesktop --fullscreen --tv`, taken from the `TV [Fullscreen]` action in `resources/meta/org.jellyfin.JellyfinDesktop.desktop` at jellyfin-desktop v2.0.0, the tag the Flathub manifest builds | Step 10 was asked for before switching to the box; the box report's Jellyfin section confirms it |

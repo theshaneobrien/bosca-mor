@@ -13,7 +13,7 @@
 | 7 Settings and OSK | done | 76 launcher tests pass; Settings shot checked against Settings.dc.html |
 | 8 Return to Bosca Mór and icons | done | 88 launcher tests, 39 daemon tests (WSL). Still open shot checked against the design; inset SVG and full PNG checked in a dev shot with test logos |
 | 9 Installer | done | bash -n passes (no shellcheck on the dev machine); --dry-run lists every action and changed nothing; two runs into a scratch root in WSL with stand-in system tools: the second reported no changes. Linux export preset added (step 9 fix): `build/boscamor` is an x86_64 ELF with the PCK embedded and starts headless in WSL without script errors |
-| 10 Jellyfin TV mode | deferred | do last, once the app is mostly built |
+| 10 Jellyfin TV mode | done | Args from the upstream desktop file Flathub builds (D59), not yet read on the box; 90 launcher tests. Release v0.10.0 carries the Linux build |
 
 ## Rebuilding the launcher
 
@@ -34,6 +34,21 @@ BOX=user@host tools/deploy.sh
 ## Box check batches
 
 A after step 4, B after step 6, C after step 9 (see docs/PROMPTS.md).
+
+## Getting it onto the box
+
+Each release on GitHub carries the Linux build. On the box (curl and git ship with Mint; install git with `sudo apt install git` if it's missing):
+
+```bash
+git clone https://github.com/theshaneobrien/bosca-mor.git
+cd bosca-mor
+mkdir -p build
+curl -L -o build/boscamor https://github.com/theshaneobrien/bosca-mor/releases/download/v0.10.0/boscamor
+chmod +x build/boscamor
+install/install.sh
+```
+
+Reboot after the installer. For a later release: `git pull`, download that release's `boscamor` the same way, and run `install/install.sh` again.
 
 ## Pending on box (Chief)
 
@@ -83,6 +98,7 @@ Before it starts, open Firefox (one tab), LibreOffice Writer with unsaved text a
 - [ ] The Music Assistant Companion bundle installs from its latest GitHub release (step 9).
 - [ ] The installer found Cinnamon's `button-power` key and set it to `nothing`; pressing Power on the box (not the remote) does nothing on its own (step 9).
 - [ ] The "Return to the launcher" shortcut is on the desktop and in the menu, and runs on one click (step 9).
+- [ ] The Jellyfin tile opens straight into TV fullscreen. The box report's "Jellyfin desktop entries" section should show `Exec=... jellyfin-desktop --fullscreen --tv` under "TV [Fullscreen]"; if it differs, fix both `apps.default.json` copies (step 10).
 - [ ] Check the mouse: hover dwell, click to launch, wheel one tile per notch, cursor hides after 3 s (step 2).
 - [ ] The exported `/opt/boscamor/boscamor` starts full screen on X11 after login and renders with the Compatibility renderer on the J4105's GPU (step 9 fix).
 
@@ -91,7 +107,6 @@ Before it starts, open Firefox (one tab), LibreOffice Writer with unsaved text a
 - [ ] Toasts: launch failed, no window within 15 s, and the memory warning. The daemon events arrive (`launch_failed`, `memory_warning`) but the launcher only logs them; there is no toast UI yet, and no step names it.
 
 
-- [ ] Jellyfin TV fullscreen Exec args. Run `grep -B2 -A3 -i tv /var/lib/flatpak/exports/share/applications/org.jellyfin.JellyfinDesktop*.desktop` on the box, then do step 10.
 
 - [ ] Windows build of the launcher, after Linux v1 works on the box. Godot already exports for Windows; the work is mostly a Windows counterpart to the daemon:
     - global Home and Power keys through `RegisterHotKey` or a low-level keyboard hook (ctypes, still stdlib);

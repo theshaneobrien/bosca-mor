@@ -380,6 +380,6 @@ func test_about_shows_device() -> void:
 	_act("nav_right")
 	var labels: Array = st._items.map(func(i): return i.label)
 	eq(labels, ["Version", "Device name", "IP address", "Memory", "Session", "Last memory warning"], "rows")
-	eq(st._items[0].value, "0.7.0", "version")
+	eq(st._items[0].value, ProjectSettings.get_setting("application/config/version"), "version")
 	eq(st._items[5].value, "400 MB free while plex ran", "memory warning")
 	_teardown()

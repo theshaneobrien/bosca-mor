@@ -63,3 +63,13 @@ func test_url_filled_into_argv() -> void:
 	eq(argv[0], "firefox", "rest kept")
 	var plex: Dictionary = r.apps.filter(func(a): return a.id == "plex")[0]
 	eq(Apps.argv_for(plex), ["flatpak", "run", "tv.plex.PlexHTPC"], "no url")
+
+
+# Step 10: Jellyfin opens the flatpak's TV fullscreen mode.
+func test_jellyfin_tv_fullscreen() -> void:
+	var r := Apps.load_file(Apps.DEFAULT_PATH)
+	var jf: Dictionary = r.apps.filter(func(a): return a.id == "jellyfin")[0]
+	eq(Apps.argv_for(jf), ["flatpak", "run", "org.jellyfin.JellyfinDesktop", "--fullscreen", "--tv"], "TV fullscreen")
+	for a in r.apps:
+		for arg in a.argv:
+			check(not arg.begins_with("["), "%s: no placeholder left: %s" % [a.id, arg])

@@ -4,7 +4,7 @@
   {"id":"plex","name":"Plex","kind":"Video","description":"Movies, shows and live TV","tint":"#2b2513","accent":"#ffc94d",
    "argv":["flatpak","run","tv.plex.PlexHTPC"]},
   {"id":"jellyfin","name":"Jellyfin","kind":"Video","description":"Your media library","tint":"#10262b","accent":"#5fdcea",
-   "argv":["flatpak","run","org.jellyfin.JellyfinDesktop","[TV FULLSCREEN ARGS]"]},
+   "argv":["flatpak","run","org.jellyfin.JellyfinDesktop","--fullscreen","--tv"]},
   {"id":"netflix","name":"Netflix","kind":"Video","description":"Films and series","tint":"#0f2622","accent":"#3cc4a8",
    "url":"https://www.netflix.com",
    "argv":["firefox","--kiosk","--new-instance","--profile","/home/USER/.local/share/boscamor/profiles/netflix","{url}"]},
