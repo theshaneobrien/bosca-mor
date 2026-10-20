@@ -9,6 +9,7 @@ const Motion := preload("res://scripts/motion.gd")
 const StateFile := preload("res://scripts/state_file.gd")
 const HintBar := preload("res://scripts/hint_bar.gd")
 const UI := preload("res://scripts/ui.gd")
+const Wifi := preload("res://scripts/wifi.gd")
 
 const DAYS := ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
 const MONTHS := ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
@@ -45,6 +46,10 @@ var _tile_on: Array[bool] = []
 var _fade: ColorRect
 var _launching := false
 var _clock_timer: Timer
+var _wifi_timer: Timer
+var _wifi_state := "unknown"
+## Tests point this at a fixture; empty reads /proc/net/wireless.
+var wifi_path := ""
 var _hints: HBoxContainer
 var _hover := -1                    # tile under the pointer, waiting out the dwell
 var _hover_since := 0
@@ -72,6 +77,40 @@ func _ready() -> void:
 	get_viewport().size_changed.connect(_on_size_changed)
 	set_focus(focus, false)
 	_tick_clock()
+	_wifi_timer = Timer.new()
+	_wifi_timer.wait_time = Tokens.WIFI_POLL
+	_wifi_timer.timeout.connect(poll_wifi)
+	add_child(_wifi_timer)
+	_wifi_timer.start()
+	poll_wifi()
+
+
+## Back from hidden: the clock and Wi-Fi timers were paused, so read both now.
+func refresh() -> void:
+	_tick_clock()
+	poll_wifi()
+	_wifi_timer.start()
+
+
+func poll_wifi() -> void:
+	set_wifi(Wifi.state(wifi_path if wifi_path else Wifi.PATH))
+
+
+## "on" and "unknown" (not Linux) show the icon, "off" shows it struck
+## through, "none" (a wired box) hides it.
+func set_wifi(state: String) -> void:
+	if state == _wifi_state and _wifi.texture != null:
+		return
+	_wifi_state = state
+	_wifi.visible = state != "none"
+	if state == "off":
+		_wifi.texture = Glyphs.texture("wifi-off", Tokens.MUTED, Tokens.STATUS_ICON, Tokens.STATUS_STROKE, _scale)
+	else:
+		_wifi.texture = Glyphs.texture("wifi", Tokens.STATUS, Tokens.STATUS_ICON, Tokens.STATUS_STROKE, _scale)
+
+
+func wifi_state() -> String:
+	return _wifi_state
 
 
 func _unhandled_input(ev: InputEvent) -> void:
@@ -460,7 +499,8 @@ func _raster_glyphs() -> void:
 		var app: Dictionary = apps[i]
 		var tr: TextureRect = tiles[i].get_node("Holder/Tile/Glyph")
 		tr.texture = Glyphs.texture(Glyphs.name_for(app), app.accent, Tokens.GLYPH, Tokens.GLYPH_STROKE, s)
-	_wifi.texture = Glyphs.texture("wifi", Tokens.STATUS, Tokens.STATUS_ICON, Tokens.STATUS_STROKE, _scale)
+	_wifi.texture = null              # set_wifi draws it again at the new scale
+	set_wifi(_wifi_state)
 
 
 func _display_scale() -> float:

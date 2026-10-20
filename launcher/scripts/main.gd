@@ -11,6 +11,7 @@ const Sidebar := preload("res://scripts/sidebar.gd")
 const Confirm := preload("res://scripts/confirm.gd")
 const DaemonClient := preload("res://scripts/daemon_client.gd")
 const InputModeScript := preload("res://scripts/input_mode.gd")
+const Motion := preload("res://scripts/motion.gd")
 
 const OFF_TEXT := {"poweroff": "Shutting down", "restart": "Restarting"}
 
@@ -28,6 +29,10 @@ var daemon: Node
 var _off: ColorRect
 var _off_text: Label
 var _window_mode := Window.MODE_WINDOWED
+## True while an app or the desktop is in front: the window is minimised and
+## the tree paused, with only the daemon poll timer running.
+var is_hidden := false
+var _shown_sleep_usec := 0
 
 
 func _ready() -> void:
@@ -52,7 +57,7 @@ func _ready() -> void:
 	state.confirm_focus_changed.connect(confirm.set_focus)
 	state.settings_requested.connect(func(): print("Settings arrives in step 7"))
 	home.launch_requested.connect(daemon.launch)
-	home.launch_faded.connect(daemon.set_visible.bind(false))
+	home.launch_faded.connect(hide_launcher)
 	daemon.app_exited.connect(_on_app_exited)
 	daemon.launch_failed.connect(_on_launch_failed)
 	daemon.show_home.connect(_on_show_home)
@@ -64,8 +69,8 @@ func _ready() -> void:
 
 func _on_app_exited(_app_id: String, _code: int) -> void:
 	if home.is_launching():
+		show_launcher()
 		home.play_return()
-		daemon.set_visible(true)
 
 
 # The toast naming the app comes later; for now the launcher just comes back.
@@ -74,20 +79,55 @@ func _on_launch_failed(app_id: String, error: String) -> void:
 	_on_app_exited(app_id, -1)
 
 
+# Home or Guide while hidden. An app with keep_on_home is still running.
 func _on_show_home() -> void:
+	show_launcher()
+	if home.is_launching():
+		home.play_return()
 	if state.screen == State.Screen.DESKTOP or state.screen == State.Screen.OFF:
 		state.show_home()
-	daemon.set_visible(true)
 
 
 # Power from the daemon shows the launcher and opens the confirm, whatever
 # was on screen (SPEC: "Power, in any state").
 func _on_power_pressed() -> void:
+	show_launcher()
 	if home.is_launching():
 		home.play_return()
 	if state.screen in [State.Screen.DESKTOP, State.Screen.OFF]:
 		state.show_home()
 	state.handle("power")
+
+
+# Hidden and shown (SPEC Resource use) ------------------------------------------
+
+## After the launch fade, or on Desktop: minimise, pause, free the blur and
+## stop tweens, and sleep longer between main-loop wakeups.
+func hide_launcher() -> void:
+	if is_hidden:
+		return
+	is_hidden = true
+	daemon.set_visible(false)
+	sidebar.close(false)
+	confirm.close(false)
+	Motion.stop_all()
+	_shown_sleep_usec = OS.low_processor_usage_mode_sleep_usec
+	OS.low_processor_usage_mode_sleep_usec = Tokens.HIDDEN_SLEEP_USEC
+	get_tree().paused = true
+	_minimize_window()   # last: minimising can deliver window events at once
+
+
+## The reverse: unpause first so the return fade can run.
+func show_launcher() -> void:
+	if not is_hidden:
+		return
+	is_hidden = false
+	get_tree().paused = false
+	OS.low_processor_usage_mode_sleep_usec = _shown_sleep_usec
+	_restore_window()
+	if not home.is_launching():
+		home.set_focus(home.focus, false)   # settle anything a stopped tween left
+	home.refresh()
 	daemon.set_visible(true)
 
 
@@ -138,9 +178,7 @@ func _on_changed(to: State.Screen, from: State.Screen) -> void:
 			confirm.close(animate)
 			_off.visible = false
 			if from == State.Screen.DESKTOP:
-				_restore_window()
-			if from in [State.Screen.DESKTOP, State.Screen.OFF]:
-				daemon.set_visible(true)
+				show_launcher()
 		State.Screen.SIDEBAR:
 			if not sidebar.has_capture():
 				sidebar.capture()
@@ -155,7 +193,7 @@ func _on_changed(to: State.Screen, from: State.Screen) -> void:
 			sidebar.close(false)
 			confirm.close(false)
 			daemon.show_desktop()
-			_minimize_window()
+			hide_launcher()
 		State.Screen.OFF:
 			sidebar.close(false)
 			confirm.close(false)
@@ -194,11 +232,19 @@ func _restore_window() -> void:
 	if DisplayServer.get_name() == "headless" or get_viewport() != get_window():
 		return
 	get_window().mode = _window_mode
+	get_window().move_to_foreground()
 	get_window().grab_focus()
 
 
 # On the dev machine there is no daemon to bring the launcher back, so
 # focusing its window again does it (D23).
+# Minimising itself can deliver a focus-in, so only a window that is no longer
+# minimised counts, checked once that event has settled.
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_APPLICATION_FOCUS_IN and state.screen == State.Screen.DESKTOP:
+		_refocused.call_deferred()
+
+
+func _refocused() -> void:
+	if state.screen == State.Screen.DESKTOP and get_window().mode != Window.MODE_MINIMIZED 			and DisplayServer.get_name() != "headless":
 		state.show_home()

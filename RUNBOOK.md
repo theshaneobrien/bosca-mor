@@ -9,7 +9,7 @@
 | 3 Motion | done | 36 launcher tests pass. Home tweens built; sidebar, confirm and blur tweens are defined in motion.gd and get wired in step 4 |
 | 4 Sidebar, power, desktop | done | 48 launcher tests pass; every Home, Sidebar and Power confirm cell of the navigation table is a test case. Menu and power shots checked against the design |
 | 5 Daemon and IPC | done | 29 daemon tests (run in WSL on the dev machine) including the launcher round trip; 55 launcher tests |
-| 6 Idle behaviour | not started | |
+| 6 Idle behaviour | done | 63 launcher tests pass. Dev-machine numbers below; the J4105 budgets are still to measure |
 | 7 Settings and OSK | not started | |
 | 8 Return to Bosca Mór and icons | not started | |
 | 9 Installer | not started | |
@@ -34,6 +34,8 @@ Hardware checks that sessions can't run. Tick them off after testing on the J410
 - [ ] Replace `daemon/tests/fixtures/proc_bus_input_devices.txt` with `cat /proc/bus/input/devices` from the box (step 5).
 - [ ] Check `xprop` on the launcher window: its title must be exactly "Launcher" for the daemon's `wmctrl -F -a` raise fallback (step 5).
 - [ ] Launch Netflix (Firefox kiosk), press Home: every Firefox process of that profile ends, `pgrep -f profiles/netflix` is empty (step 5).
+- [ ] Measure every row of SPEC "Budgets on the J4105" (step 6): `pidstat -p <launcher pid> 5` for 60 s on idle Home (under 1% of a core, RSS under 150 MB) and with an app in front (under 0.5%); the daemon's pid the same way (under 0.5%, under 20 MB RSS); `intel_gpu_top` shows no GPU work while idle. If hidden misses 0.5%, SPEC says switch to quitting the launcher on launch.
+- [ ] Check the Wi-Fi icon on the box: shown when connected, struck through when not, gone if the box has no wireless interface (step 6).
 - [ ] Check the mouse: hover dwell, click to launch, wheel one tile per notch, cursor hides after 3 s (step 2).
 
 ## Deferred
@@ -48,6 +50,17 @@ Hardware checks that sessions can't run. Tick them off after testing on the J410
 ## Blocked
 
 Nothing yet.
+
+## Dev-machine numbers (not the box)
+
+Step 6, 20 Oct 2026: Windows 11 desktop, Godot 4.7.2, launcher in a window, CPU from PowerShell `TotalProcessorTime` (no pidstat on Windows). These say nothing about the J4105 budgets.
+
+| State | CPU (one core) | Working set | Frames drawn / loop iterations in 10 s |
+| --- | --- | --- | --- |
+| Home, idle, shown, 55 s | 2.6% | 207 MB | 1 / 1450 |
+| Hidden (Desktop), 60 s | 1.5% | 207 MB | 0 / 100 |
+
+No redraws while idle and 10 wakeups a second while hidden, as designed. The CPU is Godot's per-iteration cost on Windows (most likely the main loop polling input devices), not launcher work.
 
 ## Deploy
 

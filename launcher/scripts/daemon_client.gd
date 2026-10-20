@@ -44,7 +44,7 @@ var _timer: Timer
 
 
 func _ready() -> void:
-	process_mode = PROCESS_MODE_ALWAYS
+	# The poll timer is the one node that runs while the tree is paused.
 	_timer = Timer.new()
 	_timer.wait_time = POLL_S
 	_timer.process_mode = PROCESS_MODE_ALWAYS

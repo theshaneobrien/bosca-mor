@@ -64,6 +64,14 @@ static func stop(target: Object, property: String) -> void:
 	_live.erase(key)
 
 
+## Kills every tracked tween where it stands (the launcher is hiding).
+static func stop_all() -> void:
+	for t in _live.values():
+		if t.is_valid():
+			t.kill()
+	_live.clear()
+
+
 ## Live tweens by key, dropping finished ones. Tests use it.
 static func live() -> Dictionary:
 	for k in _live.keys():

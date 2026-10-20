@@ -32,7 +32,6 @@ var _overlay_text: Label
 
 
 func _ready() -> void:
-	process_mode = PROCESS_MODE_ALWAYS
 	set_process(false)
 	_hide_timer = Timer.new()
 	_hide_timer.one_shot = true

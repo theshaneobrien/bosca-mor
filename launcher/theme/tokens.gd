@@ -142,6 +142,10 @@ const POINTER_WINDOW := 0.250
 const POINTER_HIDE := 3.0           # cursor hides after this long still
 const HOVER_DWELL := 0.120
 
+# Resource use (SPEC)
+const WIFI_POLL := 30.0
+const HIDDEN_SLEEP_USEC := 100000   # low processor sleep while hidden: about 10 wakeups a second
+
 # Fonts. DM Sans comes as static optical-size instances (24pt and 40pt):
 # MSDF can't draw the variable font's overlapping contours cleanly.
 const SANS_OPSZ_SPLIT := 32         # sizes from here up use the 40pt cut
