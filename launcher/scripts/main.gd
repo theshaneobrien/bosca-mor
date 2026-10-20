@@ -16,6 +16,7 @@ const SettingsView := preload("res://scripts/settings.gd")
 const Prefs := preload("res://scripts/prefs.gd")
 const StillOpen := preload("res://scripts/still_open.gd")
 const Apps := preload("res://scripts/apps.gd")
+const Toast := preload("res://scripts/toast.gd")
 
 const OFF_TEXT := {"poweroff": "Shutting down", "restart": "Restarting"}
 
@@ -31,7 +32,9 @@ var sidebar: Control
 var confirm: Control
 var settings: Control
 var still: Control
+var toast: Control
 var daemon: Node
+var _launched := {}                # the app last sent to the daemon, for its name
 var _off: ColorRect
 var _off_text: Label
 var _window_mode := Window.MODE_WINDOWED
@@ -65,6 +68,8 @@ func _ready() -> void:
 	add_child(sidebar)
 	confirm = Confirm.new()
 	add_child(confirm)
+	toast = Toast.new()
+	add_child(toast)
 	_build_off()
 
 	state.changed.connect(_on_changed)
@@ -76,10 +81,11 @@ func _ready() -> void:
 	settings.apps_changed.connect(home.reload)
 	settings.prefs_changed.connect(apply_prefs)
 	settings.launch_panel.connect(_launch_panel)
-	home.launch_requested.connect(daemon.launch)
+	home.launch_requested.connect(_launch)
 	home.launch_faded.connect(hide_launcher)
 	daemon.app_exited.connect(_on_app_exited)
 	daemon.launch_failed.connect(_on_launch_failed)
+	daemon.launch_timed_out.connect(_on_launch_timed_out)
 	daemon.show_home.connect(_on_show_home)
 	daemon.power_pressed.connect(_on_power_pressed)
 	daemon.memory_warning.connect(_on_memory_warning)
@@ -108,16 +114,31 @@ func _on_still_open(apps: Array) -> void:
 	state.show_still_open()
 
 
+# SPEC Memory watch: shown as a toast, now or the next time the launcher appears.
 func _on_memory_warning(app_id: String, mb: int) -> void:
 	var note := "%d MB free%s" % [mb, " while %s ran" % app_id if app_id else ""]
 	print("memory low: " + note)
 	settings.memory_note = note
+	toast.push("Memory ran low while %s was open" % app_name(app_id) if app_id else "Memory ran low")
+
+
+func _launch(app: Dictionary) -> void:
+	_launched = app
+	daemon.launch(app)
 
 
 func _launch_panel(app: Dictionary) -> void:
 	_panel_running = true
-	daemon.launch(app)
+	_launch(app)
 	hide_launcher()
+
+
+## The name to show for an app id: the launched app, then Home's tiles.
+func app_name(app_id: String) -> String:
+	if _launched.get("id") == app_id and _launched.has("name"):
+		return _launched.name
+	var i: int = home.index_of(app_id)
+	return home.apps[i].name if i >= 0 else app_id
 
 
 # Daemon events ----------------------------------------------------------------
@@ -131,9 +152,16 @@ func _on_app_exited(_app_id: String, _code: int) -> void:
 		home.play_return()
 
 
-# The toast naming the app comes later; for now the launcher just comes back.
 func _on_launch_failed(app_id: String, error: String) -> void:
 	push_warning("could not start %s: %s" % [app_id, error])
+	toast.push("Couldn't open %s" % app_name(app_id))
+	_on_app_exited(app_id, -1)
+
+
+# SPEC: no window within 15 s, so back to Home with a toast naming the app.
+# The daemon ends the app itself (D63).
+func _on_launch_timed_out(app_id: String) -> void:
+	toast.push("%s took too long to open" % app_name(app_id))
 	_on_app_exited(app_id, -1)
 
 
@@ -167,8 +195,10 @@ func hide_launcher() -> void:
 		return
 	is_hidden = true
 	daemon.set_visible(false)
+	home.save_focus()
 	sidebar.close(false)
 	confirm.close(false)
+	toast.hold()
 	Motion.stop_all()
 	_shown_sleep_usec = OS.low_processor_usage_mode_sleep_usec
 	OS.low_processor_usage_mode_sleep_usec = Tokens.HIDDEN_SLEEP_USEC
@@ -187,6 +217,7 @@ func show_launcher() -> void:
 	if not home.is_launching():
 		home.set_focus(home.focus, false)   # settle anything a stopped tween left
 	home.refresh()
+	toast.release()
 	daemon.set_visible(true)
 
 
@@ -284,6 +315,7 @@ func _on_changed(to: State.Screen, from: State.Screen) -> void:
 			confirm.close(false)
 			_off_text.text = OFF_TEXT[state.confirm_kind]
 			_off.visible = true
+			home.save_focus()
 			daemon.power(state.confirm_kind)
 
 

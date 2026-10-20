@@ -7,6 +7,7 @@ const Apps := preload("res://scripts/apps.gd")
 func _home() -> Control:
 	var h: Control = HomeScene.instantiate()
 	h.apps_path = Apps.DEFAULT_PATH
+	h.state_path = "res://tests/fixtures/nope.json"
 	tree.root.add_child(h)
 	return h
 

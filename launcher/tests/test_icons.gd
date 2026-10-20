@@ -151,6 +151,7 @@ func test_home_draws_inset_and_full() -> void:
 	Apps.save_file(dir.path_join("apps.json"), entries)
 	var h: Control = HomeScene.instantiate()
 	h.apps_path = dir.path_join("apps.json")
+	h.state_path = "res://tests/fixtures/nope.json"
 	tree.root.add_child(h)
 	var yt: Control = h._tile(0)
 	check(yt.get_node("Icon").visible and not yt.get_node("Glyph").visible, "inset logo instead of the glyph")

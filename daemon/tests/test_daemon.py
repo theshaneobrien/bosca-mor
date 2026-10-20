@@ -51,6 +51,9 @@ class Recorder(bi.Daemon):
     def run_cmd(self, argv):
         self.ran.append(argv)
 
+    def run_capture(self, argv):
+        return ""  # no X server in tests; FakeX in test_return answers from fixtures
+
     def signal_group(self, pgid, sig):
         if sig:
             self.signals.append((sig, time.monotonic()))
