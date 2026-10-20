@@ -197,6 +197,15 @@ const OSK_KEY_GAP := 10
 const OSK_FONT := 30
 const OSK_FIELD := 80
 
+# Toast (D61: no design; built from the dialog, button and menu tokens)
+const TOAST_HEIGHT := BUTTON
+const TOAST_PAD := STILL_ROW_PAD
+const TOAST_RADIUS := BUTTON_RADIUS
+const TOAST_ICON := MENU_ICON
+const TOAST_ICON_GAP := MENU_ICON_GAP
+const TOAST_FONT := DIALOG_BODY
+const TOAST_HOLD := 4.0             # D61: seconds on screen before it fades
+
 # Motion: seconds
 const T_TILE_FOCUS := 0.160
 const T_CAROUSEL := 0.220
@@ -217,6 +226,7 @@ const CONFIRM_SCALE_FROM := 0.96
 const REPEAT_DELAY := 0.400
 const REPEAT_RATE := 0.110
 const LAUNCH_TIMEOUT := 15.0
+const FOCUS_SAVE_DELAY := 2.0       # D60: Home saves the focused tile once it rests this long
 
 # Input (SPEC Input model)
 const STICK_DEADZONE := 0.5

@@ -14,6 +14,7 @@
 | 8 Return to Bosca Mór and icons | done | 88 launcher tests, 39 daemon tests (WSL). Still open shot checked against the design; inset SVG and full PNG checked in a dev shot with test logos |
 | 9 Installer | done | bash -n passes (no shellcheck on the dev machine); --dry-run lists every action and changed nothing; two runs into a scratch root in WSL with stand-in system tools: the second reported no changes. Linux export preset added (step 9 fix): `build/boscamor` is an x86_64 ELF with the PCK embedded and starts headless in WSL without script errors |
 | 10 Jellyfin TV mode | done | Args from the upstream desktop file Flathub builds (D59), not yet read on the box; 90 launcher tests. Release v0.10.0 carries the Linux build |
+| Spec gaps | done | Last tile in state.json (D60), keep_screen_on off, toasts (D61), 15 s launch timeout with the daemon's `app_window` and `launch_timeout` events (D62). 106 launcher tests, 51 daemon tests (WSL) including the round trip. Not in a release yet |
 
 ## Rebuilding the launcher
 
@@ -101,12 +102,15 @@ Before it starts, open Firefox (one tab), LibreOffice Writer with unsaved text a
 - [ ] The Jellyfin tile opens straight into TV fullscreen. The box report's "Jellyfin desktop entries" section should show `Exec=... jellyfin-desktop --fullscreen --tv` under "TV [Fullscreen]"; if it differs, fix both `apps.default.json` copies (step 10).
 - [ ] Check the mouse: hover dwell, click to launch, wheel one tile per notch, cursor hides after 3 s (step 2).
 - [ ] The exported `/opt/boscamor/boscamor` starts full screen on X11 after login and renders with the Compatibility renderer on the J4105's GPU (step 9 fix).
+- [ ] Focus Spotify on Home, wait 3 s, reboot: Home comes back with Spotify focused. Launch Plex, press Home, reboot: Plex focused (spec gaps, D60).
+- [ ] Set Cinnamon's screen blanking to 1 minute and leave the launcher on Home: the screen blanks on time. Put it back afterwards (spec gaps).
+- [ ] Every default app shows its window within 15 s from cold on the J4105: `journalctl --user -u boscamor-input` has "<id> showed window" for each, and none says "showed no window". Firefox kiosk and Jellyfin first runs are the likeliest to be slow; if one misses, say which and how long it took (spec gaps, D62).
+- [ ] Add a test tile to apps.json with `"argv": ["sleep", "60"]`, launch it: after 15 s Home returns with "<name> took too long to open" and `pgrep -x sleep` is empty. Remove the tile after (spec gaps, D62).
+- [ ] A tile whose argv names a program that doesn't exist brings Home back at once with "Couldn't open <name>" (spec gaps).
+- [ ] The toast reads well on the TV: size, place at the top centre, the 4 s hold, and it never steals a key press from Home (spec gaps, D61).
+- [ ] The journal's "showed window" line names the app's own window, not a notification or the launcher; replace the synthetic fixtures `0x6000003.txt` and `0x6200001.txt` with real captures if the box report has them (spec gaps, D62).
 
 ## Deferred
-
-- [ ] Toasts: launch failed, no window within 15 s, and the memory warning. The daemon events arrive (`launch_failed`, `memory_warning`) but the launcher only logs them; there is no toast UI yet, and no step names it.
-
-
 
 - [ ] Windows build of the launcher, after Linux v1 works on the box. Godot already exports for Windows; the work is mostly a Windows counterpart to the daemon:
     - global Home and Power keys through `RegisterHotKey` or a low-level keyboard hook (ctypes, still stdlib);

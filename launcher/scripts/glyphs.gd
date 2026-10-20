@@ -27,6 +27,7 @@ const PATHS := {
 	"ps-circle": "M12 20a8 8 0 1 0 0-16a8 8 0 1 0 0 16",
 	"wifi-off": "M2 9a14 14 0 0 1 20 0M5 12.5a10 10 0 0 1 14 0M8.5 16a5 5 0 0 1 7 0M12 19.5h.01M3 3l18 18",
 	"wifi": "M2 9a14 14 0 0 1 20 0M5 12.5a10 10 0 0 1 14 0M8.5 16a5 5 0 0 1 7 0M12 19.5h.01",
+	"alert": "M12 21a9 9 0 1 0 0-18a9 9 0 1 0 0 18M12 7.5v5.5M12 16.5h.01",
 }
 
 # Glyph for each default app, used when apps.json names none.

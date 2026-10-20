@@ -1,0 +1,5 @@
+_NET_WM_WINDOW_TYPE(ATOM) = _NET_WM_WINDOW_TYPE_SPLASH
+WM_CLASS(STRING) = "retroarch", "RetroArch"
+_NET_WM_NAME(UTF8_STRING) = "RetroArch"
+WM_NAME(STRING) = "RetroArch"
+WM_TRANSIENT_FOR:  not found.

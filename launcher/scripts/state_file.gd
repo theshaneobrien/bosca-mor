@@ -29,6 +29,9 @@ static func load_file(path := "") -> Dictionary:
 static func update(changes: Dictionary, path := "") -> Error:
 	if path.is_empty():
 		path = default_path()
+	# res:// is the read-only bundle; tests point state at fixtures there.
+	if path.begins_with("res://"):
+		return ERR_FILE_NO_PERMISSION
 	var data := load_file(path)
 	data.merge(changes, true)
 	return Apps.write_atomic(path, JSON.stringify(data, "  ") + "

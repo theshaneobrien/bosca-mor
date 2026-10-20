@@ -17,6 +17,7 @@ const SPECS := {
 	"launch": [Tokens.T_LAUNCH, Tween.TRANS_CUBIC, Tween.EASE_IN],
 	"return": [Tokens.T_RETURN, Tween.TRANS_CUBIC, Tween.EASE_OUT],
 	"bump": [Tokens.T_BUMP, Tween.TRANS_SINE, Tween.EASE_IN_OUT],
+	"toast": [Tokens.T_CONFIRM, Tween.TRANS_CUBIC, Tween.EASE_OUT],   # D61: the confirm's fade
 }
 
 static var reduce := false

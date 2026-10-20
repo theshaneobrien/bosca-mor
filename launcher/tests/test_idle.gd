@@ -142,6 +142,11 @@ func test_hide_and_show_are_idempotent() -> void:
 	_teardown()
 
 
+# SPEC System setup: the launcher must not inhibit screen blanking on Home.
+func test_screen_blanking_not_inhibited() -> void:
+	eq(ProjectSettings.get_setting("display/window/energy_saving/keep_screen_on"), false, "keep_screen_on off")
+
+
 func test_wifi_states() -> void:
 	var header := "Inter-| sta-|   Quality        |   Discarded packets               | Missed | WE\n face | tus | link level noise |  nwid  crypt   frag  retry   misc | beacon | 22\n"
 	eq(Wifi.parse(header + "wlp2s0: 0000   58.  -52.  -256        0      0      0      0     21        0\n"), "on", "link")

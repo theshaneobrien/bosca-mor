@@ -22,6 +22,7 @@ func _setup() -> void:
 	im.release_all()
 	home = HomeScene.instantiate()
 	home.apps_path = Apps.DEFAULT_PATH
+	home.state_path = "res://tests/fixtures/nope.json"
 	tree.root.add_child(home)
 	home.launch_requested.connect(func(app): launched.append(app.id))
 	await tree.process_frame

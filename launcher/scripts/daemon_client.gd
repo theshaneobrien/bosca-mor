@@ -7,6 +7,7 @@
 extends Node
 
 const Apps := preload("res://scripts/apps.gd")
+const Tokens := preload("res://theme/tokens.gd")
 
 const POLL_S := 0.1                 # SPEC Resource use: poll the socket every 100 ms
 const RETRY_S := 1.0
@@ -24,6 +25,11 @@ signal power_pressed
 signal memory_warning(app_id: String, available_mb: int)
 ## Return to Bosca Mor left these windows open: [{wid, name, icon, asking}].
 signal still_open(apps: Array)
+## The launched app showed its first window (D62).
+signal app_window(app_id: String)
+## The launched app showed no window within LAUNCH_TIMEOUT: the daemon said
+## so, or the launcher's own deadline passed first (D62). Emitted once.
+signal launch_timed_out(app_id: String)
 signal connected_changed(connected: bool)
 
 ## Seconds before the stand-in pretends an app exited or a power-off was a
@@ -35,6 +41,11 @@ signal connected_changed(connected: bool)
 
 var calls: Array = []
 var connected := false
+## The app waiting for its first window, or "".
+var waiting_id := ""
+## Tests set this to drive the launch deadline; below 0 reads the real clock.
+var fake_now_ms := -1
+var _window_deadline := 0
 
 var _peer: StreamPeerTCP
 var _token := ""
@@ -60,9 +71,13 @@ func _ready() -> void:
 
 func launch(app: Dictionary) -> void:
 	_record(["launch", app.id])
+	waiting_id = app.id
+	_window_deadline = _now_ms() + int(Tokens.LAUNCH_TIMEOUT * 1000.0)
 	if not _send({"cmd": "launch", "id": app.id, "argv": Apps.argv_for(app),
 			"keep_on_home": app.get("keep_on_home", false)}):
-		_later(func(): app_exited.emit(app.id, 0))
+		_later(func():
+			_stop_waiting(app.id)
+			app_exited.emit(app.id, 0))
 
 
 ## kind is "poweroff" or "restart". Only ever after the confirm.
@@ -127,8 +142,33 @@ func _dir() -> String:
 	return "" if xdg.is_empty() else xdg.path_join("boscamor")
 
 
+func _now_ms() -> int:
+	return fake_now_ms if fake_now_ms >= 0 else Time.get_ticks_msec()
+
+
+# The launch deadline lives here because this poll is the one thing that runs
+# while the launcher is hidden (SPEC Resource use).
+func _check_launch() -> void:
+	if not waiting_id.is_empty() and _now_ms() >= _window_deadline:
+		_timed_out(waiting_id)
+
+
+func _timed_out(app_id: String) -> void:
+	if app_id != waiting_id:
+		return       # already timed out here, or an older launch
+	waiting_id = ""
+	print("no window from %s within %d s" % [app_id, int(Tokens.LAUNCH_TIMEOUT)])
+	launch_timed_out.emit(app_id)
+
+
+func _stop_waiting(app_id: String) -> void:
+	if app_id == waiting_id:
+		waiting_id = ""
+
+
 ## Runs every POLL_S: connects, reads, and dispatches events.
 func poll() -> void:
+	_check_launch()
 	if _peer == null:
 		_retry_in -= POLL_S
 		if _retry_in <= 0.0:
@@ -216,9 +256,16 @@ func _dispatch(msg: Dictionary) -> void:
 		"power_confirm":
 			power_pressed.emit()
 		"app_exited":
+			_stop_waiting(str(msg.get("id", "")))
 			app_exited.emit(str(msg.get("id", "")), int(msg.get("code", 0)))
 		"launch_failed":
+			_stop_waiting(str(msg.get("id", "")))
 			launch_failed.emit(str(msg.get("id", "")), str(msg.get("error", "")))
+		"app_window":
+			_stop_waiting(str(msg.get("id", "")))
+			app_window.emit(str(msg.get("id", "")))
+		"launch_timeout":
+			_timed_out(str(msg.get("id", "")))
 		"still_open":
 			var list = msg.get("apps", [])
 			still_open.emit(list if list is Array else [])

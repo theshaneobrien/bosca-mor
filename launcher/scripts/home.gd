@@ -14,6 +14,7 @@ const IconResolver := preload("res://scripts/icon_resolver.gd")
 
 const DAYS := ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
 const MONTHS := ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+const LAST_APP_KEY := "last_app"    # state.json: id of the last focused tile
 
 ## The user picked an app. Launching itself comes with the daemon (step 5).
 signal launch_requested(app: Dictionary)
@@ -55,6 +56,8 @@ var _hints: HBoxContainer
 var _hover := -1                    # tile under the pointer, waiting out the dwell
 var _hover_since := 0
 var _dwell_timer: Timer
+var _save_timer: Timer
+var _saved_id := ""                 # the last_app in state.json
 
 
 func _ready() -> void:
@@ -63,7 +66,16 @@ func _ready() -> void:
 	for e in loaded.errors:
 		push_warning("apps.json: " + e)
 	apps = Apps.visible(loaded.apps)
-	Motion.reduce = bool(StateFile.load_file(state_path).get("reduce_motion", false))
+	var saved := StateFile.load_file(state_path)
+	Motion.reduce = bool(saved.get("reduce_motion", false))
+	# SPEC: Home remembers the last focused tile across launches and reboots.
+	_saved_id = str(saved.get(LAST_APP_KEY, ""))
+	focus = maxi(0, index_of(_saved_id))
+	_save_timer = Timer.new()
+	_save_timer.one_shot = true
+	_save_timer.wait_time = Tokens.FOCUS_SAVE_DELAY
+	_save_timer.timeout.connect(save_focus)
+	add_child(_save_timer)
 	_build()
 	UI.ignore_mouse(self)
 	_dwell_timer = Timer.new()
@@ -165,6 +177,24 @@ func move(step: int) -> void:
 		Motion.bump(_strip, "position:x", _strip_x, step * Tokens.BUMP)
 		return
 	set_focus(to)
+	_save_timer.start()
+
+
+## Index of the visible app with this id, or -1.
+func index_of(app_id: String) -> int:
+	for i in apps.size():
+		if apps[i].id == app_id:
+			return i
+	return -1
+
+
+## Writes the focused app's id to state.json if it changed (D60).
+func save_focus() -> void:
+	_save_timer.stop()
+	if apps.is_empty() or apps[focus].id == _saved_id:
+		return
+	_saved_id = apps[focus].id
+	StateFile.update({LAST_APP_KEY: _saved_id}, state_path)
 
 
 ## Zooms the focused tile while the screen fades to black.
@@ -173,6 +203,7 @@ func launch() -> void:
 		return
 	_launching = true
 	_hover = -1
+	save_focus()
 	launch_requested.emit(apps[focus])
 	Motion.to(_tile(focus), "scale", Vector2.ONE * Tokens.LAUNCH_SCALE, "launch", true)
 	_fade.visible = true
@@ -223,6 +254,7 @@ func resolve_dwell() -> void:
 		return
 	if im.now_ms() - _hover_since >= int(Tokens.HOVER_DWELL * 1000):
 		set_focus(_hover)
+		_save_timer.start()
 
 
 func _input_mode() -> Node:

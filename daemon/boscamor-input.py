@@ -54,6 +54,10 @@ MEM_LOG_S = 60.0
 MEM_LOW_MB = 512
 MEM_LOW_FOR_S = 30.0
 MAX_LINE = 65536
+LAUNCH_TIMEOUT_S = 15.0  # SPEC: no window within 15 s and the launch has failed
+WINDOW_POLL_S = 0.5      # D62: how often the window list is read while waiting
+# First window types that count as an app having opened (D62).
+APP_WINDOW_TYPES = {"NORMAL", "DIALOG", "SPLASH"}
 
 NOTIFY_TITLE = "Launcher closed"
 NOTIFY_BODY = "Press Home on the remote, the Guide button, or Super + Home to bring it back."
@@ -184,6 +188,17 @@ def closable(wid, props):
     return props["name"] != LAUNCHER_TITLE
 
 
+def is_app_window(props):
+    """True for a new client that shows the launched app has opened: a normal
+    window, dialog or splash that isn't the desktop's or the launcher's (D62)."""
+    types = props["types"] or (["DIALOG"] if props["transient_for"] else ["NORMAL"])
+    if types[0] not in APP_WINDOW_TYPES:
+        return False
+    if any(c.lower() in SKIP_CLASSES for c in props["classes"]):
+        return False
+    return props["name"] != LAUNCHER_TITLE
+
+
 def desktop_entry_for(classes, dirs):
     """Name and Icon of the .desktop entry matching a WM_CLASS, or None."""
     want = {c.lower() for c in classes}
@@ -226,6 +241,11 @@ class App:
         self.deadline = 0.0
         self.killed = False
         self.show_after = False
+        # Waiting for the first window (D62): the client list at launch, and
+        # when to look again or give up. None once a window showed.
+        self.known = set()
+        self.window_deadline = None
+        self.next_window_poll = 0.0
 
 
 class Client:
@@ -349,6 +369,10 @@ class Daemon:
     def tick(self):
         now = self.now()
         self.poll_app()
+        app = self.app
+        if app and app.window_deadline is not None and not app.closing \
+                and now >= app.next_window_poll:
+            self.poll_window()
         if self.evdev and now >= self.next_rescan:
             self.rescan()
             self.next_rescan = now + RESCAN_S
@@ -376,6 +400,8 @@ class Daemon:
             due.append(self.raise_at)
         if self.app and self.app.closing:
             due.append(now + CLOSING_POLL_S)
+        elif self.app and self.app.window_deadline is not None:
+            due.append(self.app.next_window_poll)
         if self.returning:
             due.append(self.returning["next"])
         due += [c.since + HANDSHAKE_S for c in self.clients if not c.authed]
@@ -519,12 +545,19 @@ class Daemon:
     def list_windows(self):
         """Every client window: [(wid, props)]."""
         root = self.run_capture(["xprop", "-root", "_NET_CLIENT_LIST"])
-        out = []
-        for wid in parse_client_list(root):
-            text = self.run_capture(["xprop", "-id", wid, "_NET_WM_WINDOW_TYPE", "WM_CLASS",
-                                     "_NET_WM_NAME", "WM_NAME", "WM_TRANSIENT_FOR"])
-            out.append((wid, parse_window(text)))
-        return out
+        return [(wid, self.window_props(wid)) for wid in parse_client_list(root)]
+
+    def window_props(self, wid):
+        return parse_window(self.run_capture(["xprop", "-id", wid, "_NET_WM_WINDOW_TYPE", "WM_CLASS",
+                                              "_NET_WM_NAME", "WM_NAME", "WM_TRANSIENT_FOR"]))
+
+    def client_list(self):
+        """The client window ids, or None if the window list can't be read
+        (no X server, no xprop, or a window manager that doesn't keep it)."""
+        root = self.run_capture(["xprop", "-root", "_NET_CLIENT_LIST"])
+        if "_NET_CLIENT_LIST(WINDOW)" not in root:
+            return None
+        return parse_client_list(root)
 
     def return_from_desktop(self):
         """Ask every desktop window to close, then show Home or Still open."""
@@ -613,6 +646,45 @@ class Daemon:
             return
         log.info("launched %s as pid %d", app_id, proc.pid)
         self.app = App(app_id, proc, keep_on_home)
+        self.watch_for_window(self.app)
+
+    # First window (D62) --------------------------------------------------------
+
+    def watch_for_window(self, app):
+        """Remembers the windows already open, so the app's first new one
+        counts. Without a window list, nothing can be timed: say the window
+        is there, so the launcher stops waiting too."""
+        known = self.client_list()
+        if known is None:
+            log.info("cannot read the window list; not timing %s", app.id)
+            self.send({"evt": "app_window", "id": app.id})
+            return
+        now = self.now()
+        app.known = set(known)
+        app.window_deadline = now + LAUNCH_TIMEOUT_S
+        app.next_window_poll = now + WINDOW_POLL_S
+
+    def poll_window(self):
+        """Every 500 ms until the app shows a window, or 15 s pass. Then the
+        launch has failed: end the app the way Home does."""
+        app = self.app
+        now = self.now()
+        for wid in self.client_list() or []:
+            if wid in app.known:
+                continue
+            app.known.add(wid)
+            if is_app_window(self.window_props(wid)):
+                log.info("%s showed window %s", app.id, wid)
+                app.window_deadline = None
+                self.send({"evt": "app_window", "id": app.id})
+                return
+        if now >= app.window_deadline:
+            log.warning("%s showed no window within %.0f s; ending it", app.id, LAUNCH_TIMEOUT_S)
+            app.window_deadline = None
+            self.send({"evt": "launch_timeout", "id": app.id})
+            self.close_app(then_show=True)
+            return
+        app.next_window_poll = min(now + WINDOW_POLL_S, app.window_deadline)
 
     def close_app(self, then_show):
         app = self.app
