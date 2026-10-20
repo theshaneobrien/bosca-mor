@@ -1,6 +1,6 @@
 # Autoload "InputMode": which device was used last (remote/keyboard,
-# controller, pointer), the air-mouse rules, gamepad repeat, and the F12
-# debug overlay. Screens read actions; they ask this node only for the mode.
+# controller, pointer), the air-mouse rules, held-direction repeat, and the
+# F12 debug overlay. Screens read actions; they ask this node only for the mode.
 extends Node
 
 const Tokens := preload("res://theme/tokens.gd")
@@ -22,7 +22,7 @@ var fake_now_ms := -1
 var _focus_mode := Mode.REMOTE      # last non-pointer mode
 var _motion: Array = []             # [[ms, position], ...] within POINTER_WINDOW
 var _stick := {}                    # axis -> held direction action or ""
-var _held := {}                     # joypad nav action -> true while held
+var _held := {}                     # nav action -> true while a key or button holds it
 var _repeat_action := ""
 var _repeat_t := 0.0
 var _repeat_next := 0.0
@@ -65,13 +65,18 @@ func _input(ev: InputEvent) -> void:
 		return
 
 	if ev is InputEventKey:
+		if ev.echo and _nav_action(ev) != "":
+			# OS key repeat (X11, the G20S, Windows) is replaced by our own timer.
+			get_viewport().set_input_as_handled()
+			return
 		if ev.pressed:
 			_set_mode(Mode.REMOTE)
+		_track_nav(ev)
 	elif ev is InputEventJoypadButton:
 		if ev.pressed:
 			pad_style = style_for_pad(Input.get_joy_name(ev.device))
 			_set_mode(Mode.CONTROLLER)
-		_track_button(ev)
+		_track_nav(ev)
 	elif ev is InputEventJoypadMotion:
 		_track_stick(ev)
 		# Screens never see raw stick motion, only the edges sent above.
@@ -125,12 +130,34 @@ func _is_wheel(ev: InputEventMouseButton) -> bool:
 		MOUSE_BUTTON_WHEEL_LEFT, MOUSE_BUTTON_WHEEL_RIGHT]
 
 
-# Gamepad repeat ---------------------------------------------------------------
+# Held-direction repeat --------------------------------------------------------
+# Keys, D-pad and stick all repeat on one timer: REPEAT_DELAY, then REPEAT_RATE.
 
-func _track_button(ev: InputEventJoypadButton) -> void:
+func _nav_action(ev: InputEvent) -> String:
 	for a in NAV:
 		if ev.is_action(a):
-			_hold(a, ev.pressed)
+			return a
+	return ""
+
+
+func _track_nav(ev: InputEvent) -> void:
+	var a := _nav_action(ev)
+	if a != "":
+		_hold(a, ev.is_pressed())
+
+
+## Drops every held direction, e.g. when the window loses focus and the
+## release would never arrive.
+func release_all() -> void:
+	_held.clear()
+	_stick.clear()
+	_repeat_action = ""
+	set_process(false)
+
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_APPLICATION_FOCUS_OUT or what == NOTIFICATION_WM_WINDOW_FOCUS_OUT:
+		release_all()
 
 
 func _track_stick(ev: InputEventJoypadMotion) -> void:
@@ -172,7 +199,7 @@ func _process(delta: float) -> void:
 	tick(delta)
 
 
-## Advances gamepad repeat. Runs only while a pad direction is held.
+## Advances the repeat. Runs only while a direction is held.
 func tick(delta: float) -> void:
 	if _repeat_action.is_empty():
 		return

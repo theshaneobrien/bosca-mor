@@ -24,10 +24,11 @@ func _teardown() -> void:
 
 
 func _press(k: Key) -> void:
-	var e := InputEventKey.new()
-	e.keycode = k
-	e.pressed = true
-	tree.root.push_input(e, true)
+	for pressed in [true, false]:
+		var e := InputEventKey.new()
+		e.keycode = k
+		e.pressed = pressed
+		tree.root.push_input(e, true)
 
 
 # Every running tween must be one Motion tracks, one per object and property.

@@ -19,6 +19,7 @@ func _setup() -> void:
 	im.fake_now_ms = 1000
 	im._set_mode(Mode.REMOTE)
 	im._motion.clear()
+	im.release_all()
 	home = HomeScene.instantiate()
 	home.apps_path = Apps.DEFAULT_PATH
 	tree.root.add_child(home)
@@ -36,10 +37,11 @@ func _push(ev: InputEvent) -> void:
 	tree.root.push_input(ev, true)
 
 
-func _key(k: Key, pressed := true) -> void:
+func _key(k: Key, pressed := true, echo := false) -> void:
 	var e := InputEventKey.new()
 	e.keycode = k
 	e.pressed = pressed
+	e.echo = echo
 	_push(e)
 
 
@@ -170,6 +172,34 @@ func test_gamepad_repeat() -> void:
 	_button(JOY_BUTTON_DPAD_RIGHT, false)
 	im.tick(1.0)
 	eq(home.focus, 5, "release stops repeat")
+	_teardown()
+
+
+func test_held_key_uses_our_repeat_not_os_echo() -> void:
+	await _setup()
+	_key(KEY_RIGHT)
+	eq(home.focus, 1, "press")
+	for i in 5:
+		_key(KEY_RIGHT, true, true)
+	eq(home.focus, 1, "OS echo ignored")
+	im.tick(0.39)
+	eq(home.focus, 1, "no repeat before 400 ms")
+	im.tick(0.01)
+	eq(home.focus, 2, "first repeat at 400 ms")
+	im.tick(0.11)
+	eq(home.focus, 3, "then every 110 ms")
+	_key(KEY_RIGHT, false)
+	im.tick(1.0)
+	eq(home.focus, 3, "release stops repeat")
+	_teardown()
+
+
+func test_focus_loss_stops_repeat() -> void:
+	await _setup()
+	_key(KEY_RIGHT)
+	im._notification(Node.NOTIFICATION_APPLICATION_FOCUS_OUT)
+	im.tick(1.0)
+	eq(home.focus, 1, "no repeat after focus loss")
 	_teardown()
 
 

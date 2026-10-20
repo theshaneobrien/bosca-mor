@@ -23,3 +23,4 @@ One line of context per entry. Add new ones at the bottom with the next number, 
 | D17 | Reduce motion snaps movement (scale, position, rise, nudge) to its end value and plays only fades and colour changes, at half duration | SPEC says "crossfades only, all durations halved" |
 | D18 | `launch_requested` fires as the launch zoom starts, `launch_faded` when it ends; Home ignores input until `play_return()` | The daemon can start the app during the fade; a second press must not launch twice |
 | D19 | The end-of-carousel nudge moves the whole row 12 px in the pressed direction and back | SPEC names the nudge but not what moves |
+| D20 | Held arrow keys repeat on the launcher's own timer (400 ms, then 110 ms), like pads; OS key echo for nav keys is dropped | Chief found OS key repeat too fast on Home; X11 repeats at 25 a second and the G20S sends arrow keys. SPEC said keyboard echo covers keys |
