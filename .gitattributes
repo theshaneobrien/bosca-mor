@@ -1,0 +1,4 @@
+# Scripts run on the Linux box; keep LF even on a Windows checkout.
+* text=auto eol=lf
+*.ttf binary
+*.png binary
