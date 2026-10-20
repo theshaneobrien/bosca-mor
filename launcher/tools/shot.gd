@@ -1,14 +1,17 @@
 # Renders a named screen state to PNG at any output size, scaled from the
 # 1920x1080 base the same way canvas_items stretch scales the window.
 # godot --path launcher -s res://tools/shot.gd -- --state=home --size=1920x1080 --out=../shots/home.png
-# Options: --focus=N (focused tile), --apps=PATH (apps.json to use),
-# --hints=remote|xbox|playstation (hint key style)
+# States: home, menu (as Menu.dc.html), power and restart (as Power.dc.html).
+# Options: --focus=N (focused tile), --item=N (sidebar item), --apps=PATH
+# (apps.json to use), --hints=remote|xbox|playstation (hint key style)
 extends SceneTree
 
 const Tokens := preload("res://theme/tokens.gd")
-const STATES := {
-	"home": "res://scenes/home.tscn",
-}
+const MainScene := preload("res://scenes/main.tscn")
+const InputModeScript := preload("res://scripts/input_mode.gd")
+const STATES := ["home", "menu", "power", "restart"]
+# Defaults that match the design references.
+const FOCUS := {"home": 0, "menu": 2, "power": 0, "restart": 0}
 
 
 func _initialize() -> void:
@@ -16,13 +19,13 @@ func _initialize() -> void:
 
 
 func _shoot() -> void:
-	var opts := {"state": "home", "size": "1920x1080", "out": "../shots/home.png", "focus": "", "apps": "", "hints": ""}
+	var opts := {"state": "home", "size": "1920x1080", "out": "", "focus": "", "item": "1", "apps": "", "hints": ""}
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--") and a.contains("="):
 			var kv := a.substr(2).split("=", true, 1)
 			opts[kv[0]] = kv[1]
-	if not STATES.has(opts.state):
-		printerr("unknown state %s; have %s" % [opts.state, STATES.keys()])
+	if not opts.state in STATES:
+		printerr("unknown state %s; have %s" % [opts.state, STATES])
 		quit(2)
 		return
 	var wh: PackedStringArray = opts.size.split("x")
@@ -36,20 +39,30 @@ func _shoot() -> void:
 	vp.render_target_update_mode = SubViewport.UPDATE_ALWAYS
 	root.add_child(vp)
 
-	var screen: Node = load(STATES[opts.state]).instantiate()
+	var im := root.get_node_or_null("InputMode")
+	if im and not opts.hints.is_empty():
+		im.pad_style = "playstation" if opts.hints == "playstation" else "xbox"
+		im._set_mode(InputModeScript.Mode.REMOTE if opts.hints == "remote" else InputModeScript.Mode.CONTROLLER)
+
+	var main: Node = MainScene.instantiate()
 	if not opts.apps.is_empty():
-		screen.apps_path = opts.apps
-	vp.add_child(screen)
-	if not opts.focus.is_empty():
-		screen.set_focus(int(opts.focus), false)
-	if not opts.hints.is_empty():
-		screen._set_hint_style(opts.hints)
+		main.apps_path = opts.apps
+	vp.add_child(main)
+	main.animate = false
+	main.daemon.stub_delay = -1.0
+	main.home.set_focus(int(opts.focus) if opts.focus else FOCUS[opts.state], false)
+	await _frames()
 
-	for i in 4:
-		await process_frame
-	await RenderingServer.frame_post_draw
+	# The sidebar blur captures what was drawn last, so Home renders first.
+	match opts.state:
+		"menu":
+			main.state.handle("back")
+			main.state.set_sidebar_focus(int(opts.item))
+		"power", "restart":
+			main.state.ask("poweroff" if opts.state == "power" else "restart")
+	await _frames()
 
-	var out: String = opts.out
+	var out: String = opts.out if opts.out else "../shots/%s.png" % opts.state
 	if out.is_relative_path():
 		out = ProjectSettings.globalize_path("res://").path_join(out).simplify_path()
 	DirAccess.make_dir_recursive_absolute(out.get_base_dir())
@@ -60,3 +73,9 @@ func _shoot() -> void:
 		return
 	print("wrote %s" % out)
 	quit(0)
+
+
+func _frames() -> void:
+	for i in 3:
+		await process_frame
+	await RenderingServer.frame_post_draw

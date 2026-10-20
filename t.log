@@ -1,0 +1,16 @@
+Godot Engine v4.7.2.stable.official.ed1daf0bf - https://godotengine.org
+
+WARNING: apps.json: cannot read res://tests/fixtures/nope.json
+   at: push_warning (core/variant/variant_utility.cpp:1033)
+   GDScript backtrace (most recent call first):
+       [0] _ready (res://scripts/home.gd:58)
+       [1] test_empty_config_does_not_crash (res://tests/test_home.gd:43)
+       [2] _run (res://tests/run_tests.gd:54)
+daemon stub: launch jellyfin
+Settings arrives in step 7
+daemon stub: show_desktop
+daemon stub: power poweroff
+daemon stub: power restart
+daemon stub: show_desktop
+daemon stub: launch jellyfin
+48 passed, 0 failed

@@ -7,6 +7,8 @@ const Glyphs := preload("res://scripts/glyphs.gd")
 const InputModeScript := preload("res://scripts/input_mode.gd")
 const Motion := preload("res://scripts/motion.gd")
 const StateFile := preload("res://scripts/state_file.gd")
+const HintBar := preload("res://scripts/hint_bar.gd")
+const UI := preload("res://scripts/ui.gd")
 
 const DAYS := ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
 const MONTHS := ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
@@ -21,6 +23,8 @@ signal launch_faded
 ## Leave empty to read the user's state.json.
 @export var state_path := ""
 
+## Main turns this off while another screen is on top.
+var accepting_input := true
 var apps: Array = []
 var focus := 0
 var tiles: Array[Control] = []
@@ -41,8 +45,7 @@ var _tile_on: Array[bool] = []
 var _fade: ColorRect
 var _launching := false
 var _clock_timer: Timer
-var _hint_keys: Array[PanelContainer] = []
-var _hint_style := "remote"
+var _hints: HBoxContainer
 var _hover := -1                    # tile under the pointer, waiting out the dwell
 var _hover_since := 0
 var _dwell_timer: Timer
@@ -56,15 +59,13 @@ func _ready() -> void:
 	apps = Apps.visible(loaded.apps)
 	Motion.reduce = bool(StateFile.load_file(state_path).get("reduce_motion", false))
 	_build()
-	_ignore_mouse(self)
+	UI.ignore_mouse(self)
 	_dwell_timer = Timer.new()
 	_dwell_timer.one_shot = true
 	_dwell_timer.timeout.connect(resolve_dwell)
 	add_child(_dwell_timer)
 	var im := _input_mode()
 	if im:
-		_hint_style = im.hint_style()
-		im.hints_changed.connect(_set_hint_style)
 		im.mode_changed.connect(func(_m): _hover = -1)
 	_scale = _display_scale()
 	_raster_glyphs()
@@ -74,7 +75,7 @@ func _ready() -> void:
 
 
 func _unhandled_input(ev: InputEvent) -> void:
-	if _launching:
+	if _launching or not accepting_input:
 		return
 	if ev is InputEventMouseMotion:
 		_on_pointer_move(ev.position)
@@ -166,11 +167,6 @@ func _input_mode() -> Node:
 	return get_node_or_null("/root/InputMode")
 
 
-func _ignore_mouse(n: Node) -> void:
-	if n is Control:
-		n.mouse_filter = MOUSE_FILTER_IGNORE
-	for c in n.get_children():
-		_ignore_mouse(c)
 
 
 func set_focus(i: int, animate := true) -> void:
@@ -396,102 +392,31 @@ func _ring(node_name: String, inset: int, color: Color, width: int) -> Panel:
 
 
 func _build_hints() -> Control:
-	var bar := HBoxContainer.new()
-	bar.alignment = BoxContainer.ALIGNMENT_END
-	bar.add_theme_constant_override("separation", Tokens.HINT_GAP)
-	bar.add_child(_hint("Open"))
-	bar.add_child(_hint("Menu"))
-	return _margin(bar)
-
-
-func _hint(text: String) -> Control:
-	var h := HBoxContainer.new()
-	h.add_theme_constant_override("separation", Tokens.HINT_KEY_GAP)
-	var pill := PanelContainer.new()
-	pill.custom_minimum_size = Vector2(Tokens.KEY, Tokens.KEY)
-	pill.size_flags_vertical = SIZE_SHRINK_CENTER
-	var k := _label("", Tokens.mono(500, Tokens.KEY_FONT), Tokens.KEY_FONT, Tokens.TEXT)
-	k.name = "Text"
-	k.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	k.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	pill.add_child(k)
-	var g := TextureRect.new()
-	g.name = "Glyph"
-	g.custom_minimum_size = Vector2(Tokens.KEY_FONT, Tokens.KEY_FONT)
-	g.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	g.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-	g.size_flags_horizontal = SIZE_SHRINK_CENTER
-	g.size_flags_vertical = SIZE_SHRINK_CENTER
-	pill.add_child(g)
-	_hint_keys.append(pill)
-	h.add_child(pill)
-	var t := _label(text, Tokens.sans(400, Tokens.HINT), Tokens.HINT, Tokens.MUTED)
-	t.size_flags_vertical = SIZE_SHRINK_CENTER
-	h.add_child(t)
-	return h
-
-
-# Key labels follow the input mode: the remote and keyboard share "OK" and
-# "Back"; pads get their face buttons. Order matches the hints: accept, back.
-const HINT_KEYS := {
-	"remote": ["OK", "Back"],
-	"xbox": ["A", "B"],
-	"playstation": ["ps-cross", "ps-circle"],
-}
+	_hints = HintBar.new(["Open", "Menu"], Tokens.HINT, Tokens.HINT_GAP, Tokens.HINT_KEY_GAP)
+	_hints.alignment = BoxContainer.ALIGNMENT_END
+	return _margin(_hints)
 
 
 func _set_hint_style(style: String) -> void:
-	_hint_style = style if HINT_KEYS.has(style) else "remote"
-	_fill_hint_keys()
+	_hints.set_style(style)
 
 
 func hint_labels() -> Array:
-	return HINT_KEYS[_hint_style]
-
-
-func _fill_hint_keys() -> void:
-	var keys: Array = HINT_KEYS[_hint_style]
-	var glyphs := _hint_style == "playstation"
-	for i in _hint_keys.size():
-		var pill := _hint_keys[i]
-		var sb := _box(Tokens.KEY_BG, Tokens.KEY / 2)
-		if _hint_style == "remote":
-			sb.content_margin_left = Tokens.KEY_PAD_KEYBOARD
-			sb.content_margin_right = Tokens.KEY_PAD_KEYBOARD
-		pill.add_theme_stylebox_override("panel", sb)
-		var text: Label = pill.get_node("Text")
-		var g: TextureRect = pill.get_node("Glyph")
-		text.visible = not glyphs
-		g.visible = glyphs
-		if glyphs:
-			g.texture = Glyphs.texture(keys[i], Tokens.TEXT, Tokens.KEY_FONT, Tokens.STATUS_STROKE, _scale)
-		else:
-			text.text = keys[i]
+	return _hints.labels()
 
 
 # Helpers ---------------------------------------------------------------------
 
 func _label(text: String, font: Font, size: int, color: Color) -> Label:
-	var l := Label.new()
-	l.text = text
-	l.add_theme_font_override("font", font)
-	l.add_theme_font_size_override("font_size", size)
-	l.add_theme_color_override("font_color", color)
-	return l
+	return UI.label(text, font, size, color)
 
 
 func _box(color: Color, radius: int) -> StyleBoxFlat:
-	var sb := StyleBoxFlat.new()
-	sb.bg_color = color
-	sb.set_corner_radius_all(radius)
-	sb.anti_aliasing = true
-	return sb
+	return UI.box(color, radius)
 
 
 func _spacer(h: float) -> Control:
-	var c := Control.new()
-	c.custom_minimum_size.y = maxf(h, 0.0)
-	return c
+	return UI.spacer(h)
 
 
 func _margin(c: Control) -> MarginContainer:
@@ -536,12 +461,10 @@ func _raster_glyphs() -> void:
 		var tr: TextureRect = tiles[i].get_node("Holder/Tile/Glyph")
 		tr.texture = Glyphs.texture(Glyphs.name_for(app), app.accent, Tokens.GLYPH, Tokens.GLYPH_STROKE, s)
 	_wifi.texture = Glyphs.texture("wifi", Tokens.STATUS, Tokens.STATUS_ICON, Tokens.STATUS_STROKE, _scale)
-	_fill_hint_keys()
 
 
 func _display_scale() -> float:
-	var s := get_viewport().get_final_transform().get_scale().y
-	return s if s > 0.0 else 1.0
+	return UI.display_scale(self)
 
 
 func _on_size_changed() -> void:

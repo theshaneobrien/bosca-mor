@@ -67,6 +67,53 @@ const HINT_KEY_GAP := 14
 const KEY := 46
 const KEY_PAD_KEYBOARD := 16
 
+# Sidebar (design)
+const SCRIM := Color("#06060a")     # dim colour behind the sidebar and confirm
+const SIDEBAR_PAD_TOP := 64
+const SIDEBAR_PAD_X := 40
+const SIDEBAR_PAD_BOTTOM := 52
+const SIDEBAR_INSET := 24           # clock, items and footer inner padding
+const SIDEBAR_CLOCK := 76
+const SIDEBAR_DATE := 28
+const SIDEBAR_DATE_GAP := 14
+const SIDEBAR_ITEMS_GAP := 72
+const MENU_ITEM := 88
+const MENU_ITEM_RADIUS := 18
+const MENU_ITEM_FONT := 32
+const MENU_ITEM_GAP := 8
+const MENU_ICON := 36
+const MENU_ICON_GAP := 24
+const MENU_DIVIDER_PAD := 24
+const SIDEBAR_FOOTER_GAP := 40      # above the footer, and between its hints
+const SIDEBAR_HINT := 26
+const SIDEBAR_HINT_KEY_GAP := 12
+const BLUR_RADIUS := 3.0            # in quarter-size texels (D22)
+
+# Power confirm (design)
+const CONFIRM_DIM := 0.82
+const DIALOG_BG := Color("#161622")
+const DIALOG_BORDER := Color("#2a2a40")
+const BUTTON_BORDER := Color("#3a3a52")
+const DIALOG_WIDTH := 840
+const DIALOG_PAD_TOP := 72
+const DIALOG_PAD := 64
+const DIALOG_RADIUS := 36
+const DIALOG_ICON := 80
+const DIALOG_TITLE := 60
+const DIALOG_TITLE_LINE := 1.1
+const DIALOG_TITLE_GAP := 36
+const DIALOG_BODY := 32
+const DIALOG_BODY_GAP := 18
+const DIALOG_BUTTONS_GAP := 60
+const BUTTON := 100
+const BUTTON_RADIUS := 22
+const BUTTON_FONT := 34
+const BUTTON_GAP := 24
+const BUTTON_BORDER_WIDTH := 2
+
+# Power-off screen (design)
+const OFF_TEXT := 32
+
 # Motion: seconds
 const T_TILE_FOCUS := 0.160
 const T_CAROUSEL := 0.220
