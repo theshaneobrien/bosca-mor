@@ -45,12 +45,12 @@ Each release on GitHub carries the Linux build. On the box (curl and git ship wi
 git clone https://github.com/theshaneobrien/bosca-mor.git
 cd bosca-mor
 mkdir -p build
-curl -L -o build/boscamor https://github.com/theshaneobrien/bosca-mor/releases/download/v0.10.0/boscamor
+curl -L -o build/boscamor https://github.com/theshaneobrien/bosca-mor/releases/latest/download/boscamor
 chmod +x build/boscamor
 install/install.sh
 ```
 
-Reboot after the installer. For a later release: `git pull`, download that release's `boscamor` the same way, and run `install/install.sh` again.
+Reboot after the installer. For a later release: `git pull`, run the same `curl` (it always fetches the latest release), and run `install/install.sh` again.
 
 ## Pending on box (Chief)
 
