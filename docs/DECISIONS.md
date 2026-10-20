@@ -17,3 +17,5 @@ One line of context per entry. Add new ones at the bottom with the next number, 
 | D11 | The G20S voice button does nothing | Chief's call |
 | D12 | Brand logos are never committed | Trademarks; they go in `~/.config/boscamor/icons/` on the box |
 | D13 | Jellyfin uses the flatpak's TV fullscreen entry; args deferred to step 10 | The four start-menu entries exist, but their Exec lines haven't been read yet |
+| D14 | Dev on Windows (native Godot) plus WSL2 (daemon, installer); the Wyse only runs box checks, in three batches | Chief's Linux machines are low-power; Godot cross-exports Linux builds from Windows |
+| D15 | `BOSCAMOR_HOME` and `BOSCAMOR_IPC` / `--dev-port` dev overrides | Keep dev files inside the repo, and let the Windows launcher reach the WSL2 daemon |

@@ -8,6 +8,16 @@ Normal effort is right for every step. Use extended thinking only when a step is
 
 **Parallel track.** Step 5 (daemon) depends only on step 1 and the IPC tables in SPEC. Run it in its own git worktree while steps 2 to 4 happen on the launcher, then merge.
 
+**Where things run.** Everything is built on Windows: the launcher in native Godot, the daemon and installer in WSL2 (see CLAUDE.md, "Dev machine"). The Wyse only runs box checks, in three batches:
+
+| Batch | After step | Box checks |
+| --- | --- | --- |
+| A | 4 | Steps 1 to 4: G20S `evtest`, input feel, 60 fps sweep, navigation on the TV |
+| B | 6 | Steps 5 and 6: Home and Power keys via the daemon, app close timing, the budgets table |
+| C | 9 | Steps 7 to 9: Settings persistence across reboot, Return to Bosca Mór with real apps, fresh-Mint install |
+
+Before a batch, export the Linux build and deploy (CLAUDE.md, "Shipping to the box"). Until the installer exists, run the build and daemon by hand on the box.
+
 ---
 
 ## Step 1: Skeleton
@@ -20,7 +30,9 @@ Normal effort is right for every step. Use extended thinking only when a step is
 - `theme/tokens.gd` with every token. DM Sans and DM Mono bundled, with MSDF enabled.
 - A static Home built from apps.json: top bar, hero, ten tiles, hint bar. The line-glyph fallback icons.
 - `tests/run_tests.gd`: a minimal runner that finds `test_*.gd`, calls `test_*` methods, prints failures, and exits with the failure count.
-- `tools/shot.gd` and `tools/deploy.sh`.
+- `tools/shot.gd` and `tools/deploy.sh` (bash, run through WSL2 on Windows).
+- `scripts/paths.gd`, the one path helper. It honours `BOSCAMOR_HOME`, and Home reads `apps.json` through it. Running with `BOSCAMOR_HOME=dev-home` seeds `dev-home/` from `apps.default.json` on first run.
+- A "Linux" export preset (x86_64, PCK embedded) in `export_presets.cfg`.
 
 **Dev checks:**
 - Tests: apps.json loads, 10 tiles, order preserved, a missing optional field doesn't crash.
@@ -99,6 +111,9 @@ Normal effort is right for every step. Use extended thinking only when a step is
   - memory watch
 - `--fake-input` dev mode.
 - `BOSCAMOR_DRY_RUN`.
+- `--dev-port` and the launcher's `BOSCAMOR_IPC` override (SPEC "IPC", Dev override).
+- `paths()`, honouring `BOSCAMOR_HOME`.
+- Everything runs and is tested in WSL2.
 - The launcher-side `DaemonClient`, polled from the one always-processing node.
 
 **Dev checks:** unittest, using `sleep 60` as a dummy app, covering:
@@ -109,7 +124,7 @@ Normal effort is right for every step. Use extended thinking only when a step is
 - a second launch ends the first;
 - `power` never executes without `BOSCAMOR_DRY_RUN` being honoured.
 
-Also one integration test: a headless launcher connects, sends `launch`, and receives `app_exited`.
+Also one integration test: a headless Windows launcher connects to the WSL2 daemon through `BOSCAMOR_IPC`, sends `launch`, and receives `app_exited`.
 
 **Box checks:**
 - Launch Plex, press Home: Plex exits and the launcher is back within 500 ms.
@@ -186,8 +201,10 @@ Also one integration test: a headless launcher connects, sends `launch`, and rec
 - The LightDM X11 session pin.
 
 **Dev checks:**
-- `bash -n` passes, and shellcheck passes if installed.
-- `--dry-run` on the dev machine lists every action and changes nothing.
+In WSL2:
+
+- `bash -n` passes, and shellcheck passes.
+- `--dry-run` lists every action and changes nothing. WSL2 is Ubuntu, not Mint, so Mint-only pieces (LightDM, Cinnamon gsettings) are only printed by the dry run, never run there.
 
 **Box checks:**
 - A fresh Mint install becomes a working box in one run.

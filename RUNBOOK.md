@@ -15,6 +15,17 @@
 | 9 Installer | not started | |
 | 10 Jellyfin TV mode | deferred | do last, once the app is mostly built |
 
+## Dev setup (Windows, once)
+
+- [ ] Godot 4 stable, console build, on PATH as `godot`
+- [ ] Godot Linux export templates installed, matching that version
+- [ ] WSL2 with Ubuntu: `sudo apt install python3 rsync openssh-client shellcheck x11-utils wmctrl`
+- [ ] SSH key from WSL2 to the Wyse, so deploys don't prompt
+
+## Box check batches
+
+A after step 4, B after step 6, C after step 9 (see docs/PROMPTS.md).
+
 ## Pending on box (Chief)
 
 Hardware checks that sessions can't run. Tick them off after testing on the J4105.
