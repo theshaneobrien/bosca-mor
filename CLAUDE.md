@@ -56,6 +56,7 @@ python3 -m unittest discover -s daemon/tests                  # daemon tests
 BOSCAMOR_DRY_RUN=1 python3 daemon/boscamor-input.py --fake-input   # dev daemon: type home/power/guide on stdin
 bash -n install/install.sh && install/install.sh --dry-run
 BOX=user@host tools/deploy.sh                                 # rsync build + daemon to the box
+tools/box-report.sh --all                                     # on the box: collect what dev sessions need (.tar.gz)
 ```
 
 `shots/` is gitignored. Compare screenshots against `docs/design/*.dc.html`. Those files are reference markup: tokens and layout are in their inline styles, and computed styles are in the `renderVals()` script at the bottom. They are not code to port.

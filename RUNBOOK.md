@@ -12,12 +12,22 @@
 | 6 Idle behaviour | done | 63 launcher tests pass. Dev-machine numbers below; the J4105 budgets are still to measure |
 | 7 Settings and OSK | done | 76 launcher tests pass; Settings shot checked against Settings.dc.html |
 | 8 Return to Bosca Mór and icons | done | 88 launcher tests, 39 daemon tests (WSL). Still open shot checked against the design; inset SVG and full PNG checked in a dev shot with test logos |
-| 9 Installer | not started | |
+| 9 Installer | done | bash -n passes (no shellcheck on the dev machine); --dry-run lists every action and changed nothing; two runs into a scratch root in WSL with stand-in system tools: the second reported no changes |
 | 10 Jellyfin TV mode | deferred | do last, once the app is mostly built |
 
 ## Pending on box (Chief)
 
 Hardware checks that sessions can't run. Tick them off after testing on the J4105.
+
+**First, collect data for the dev sessions.** On the box, after the installer has run and you have rebooted:
+
+```bash
+tools/box-report.sh --all
+```
+
+Before it starts, open Firefox (one tab), LibreOffice Writer with unsaved text and its "Save changes?" prompt showing, and a text editor with unsaved text. It asks you to press each remote and pad button (Enter on a keyboard skips one), measures the launcher and daemon for the budgets, and writes `~/box-report-<date>.tar.gz`. Copy that back to the dev machine. It answers the G20S keycodes, the input devices and xprop fixtures, the Cinnamon power and key settings, the session type, whether the daemon service started, the Jellyfin TV entries, installed icons and the budgets. The key capture is untested here (no input devices in WSL), so tell the next session if it misbehaves.
+
+- [ ] Run `tools/box-report.sh --all` and copy the `.tar.gz` back (all steps).
 
 - [ ] Run `evtest` on the G20S dongle and record its keycodes here (step 2). Bound now: arrows, Enter, Esc, Backspace, `KEY_BACK`, `KEY_MENU`, Home, `KEY_HOMEPAGE`. Godot has no `KEY_COMPOSE`; SPEC says X11 delivers it as Menu, so check that with F12.
 - [ ] Press every G20S button with the F12 overlay open and check the action shown matches SPEC "Input model" (step 2).
@@ -46,9 +56,18 @@ Hardware checks that sessions can't run. Tick them off after testing on the J410
 - [ ] Close anyway asks first (Cancel focused) and then closes the editor with `xkill -id` (step 8).
 - [ ] Put a `full`-style PNG (600 px or more) and an SVG logo in `~/.config/boscamor/icons/`; both look sharp on a focused tile at 1080p, and Settings > Apps says "Drop-in icon" (step 8).
 - [ ] Replace the synthetic `daemon/tests/fixtures/xprop/` files with real `xprop` captures from the box, including the launcher's own window, so the skip list is checked against real WM_CLASS values (step 8).
+- [ ] On a fresh Mint install, `install/install.sh` makes a working box in one run; reboot, and the launcher opens full screen on login (step 9).
+- [ ] A second `install/install.sh` reports "No changes" (step 9).
+- [ ] After the reboot, `systemctl --user status boscamor-input` is active. If Cinnamon never starts `graphical-session.target`, the unit's `WantedBy` must change; the box report shows both (step 9).
+- [ ] The installer's Spotify step: the key at `SPOTIFY_KEY_URL` in install.sh changes from time to time; if apt rejects the repository, update the URL from Spotify's Linux download page (step 9).
+- [ ] The Music Assistant Companion bundle installs from its latest GitHub release (step 9).
+- [ ] The installer found Cinnamon's `button-power` key and set it to `nothing`; pressing Power on the box (not the remote) does nothing on its own (step 9).
+- [ ] The "Return to the launcher" shortcut is on the desktop and in the menu, and runs on one click (step 9).
 - [ ] Check the mouse: hover dwell, click to launch, wheel one tile per notch, cursor hides after 3 s (step 2).
 
 ## Deferred
+
+- [ ] The Linux launcher export. No step builds `build/boscamor`: the project has no `export_presets.cfg`, and exporting needs Godot 4.7.2's export templates. Until then the installer warns "no launcher at /opt/boscamor/boscamor". Needs a Linux x86_64 preset with the PCK embedded (SPEC), then `tools/deploy.sh`.
 
 - [ ] Toasts: launch failed, no window within 15 s, and the memory warning. The daemon events arrive (`launch_failed`, `memory_warning`) but the launcher only logs them; there is no toast UI yet, and no step names it.
 

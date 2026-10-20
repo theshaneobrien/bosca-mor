@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Return to the launcher
+Comment=Close the desktop apps and go back to the TV launcher
+Exec=/usr/bin/python3 /opt/boscamor/boscamor-input.py --return
+Icon=go-home
+Terminal=false
+Categories=Utility;

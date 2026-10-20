@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Launcher
+Comment=Full-screen launcher for the TV
+Exec=/opt/boscamor/boscamor --fullscreen
+Terminal=false
+NoDisplay=true
+X-GNOME-Autostart-enabled=true
+X-GNOME-Autostart-Delay=2
