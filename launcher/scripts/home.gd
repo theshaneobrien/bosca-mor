@@ -4,9 +4,13 @@ extends Control
 const Tokens := preload("res://theme/tokens.gd")
 const Apps := preload("res://scripts/apps.gd")
 const Glyphs := preload("res://scripts/glyphs.gd")
+const InputModeScript := preload("res://scripts/input_mode.gd")
 
 const DAYS := ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
 const MONTHS := ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+
+## The user picked an app. Launching itself comes with the daemon (step 5).
+signal launch_requested(app: Dictionary)
 
 ## Leave empty to read the user's apps.json (or the bundled default).
 @export var apps_path := ""
@@ -24,6 +28,11 @@ var _name: Label
 var _desc: Label
 var _strip: HBoxContainer
 var _clock_timer: Timer
+var _hint_keys: Array[PanelContainer] = []
+var _hint_style := "remote"
+var _hover := -1                    # tile under the pointer, waiting out the dwell
+var _hover_since := 0
+var _dwell_timer: Timer
 
 
 func _ready() -> void:
@@ -33,11 +42,94 @@ func _ready() -> void:
 		push_warning("apps.json: " + e)
 	apps = Apps.visible(loaded.apps)
 	_build()
+	_ignore_mouse(self)
+	_dwell_timer = Timer.new()
+	_dwell_timer.one_shot = true
+	_dwell_timer.timeout.connect(resolve_dwell)
+	add_child(_dwell_timer)
+	var im := _input_mode()
+	if im:
+		_hint_style = im.hint_style()
+		im.hints_changed.connect(_set_hint_style)
+		im.mode_changed.connect(func(_m): _hover = -1)
 	_scale = _display_scale()
 	_raster_glyphs()
 	get_viewport().size_changed.connect(_on_size_changed)
 	set_focus(focus)
 	_tick_clock()
+
+
+func _unhandled_input(ev: InputEvent) -> void:
+	if ev is InputEventMouseMotion:
+		_on_pointer_move(ev.position)
+		return
+	if ev.is_action_pressed("nav_left", true):
+		move(-1)
+	elif ev.is_action_pressed("nav_right", true):
+		move(1)
+	elif ev.is_action_pressed("accept"):
+		if ev is InputEventMouseButton:
+			var i := tile_at(ev.position)
+			if i < 0:
+				return
+			set_focus(i)
+		launch()
+	else:
+		return
+	get_viewport().set_input_as_handled()
+
+
+## Moves focus by one tile and stops at the ends.
+func move(step: int) -> void:
+	set_focus(focus + step)
+
+
+func launch() -> void:
+	if not apps.is_empty():
+		launch_requested.emit(apps[focus])
+
+
+## Index of the tile (with its label) under a viewport position, or -1.
+func tile_at(pos: Vector2) -> int:
+	for i in tiles.size():
+		if tiles[i].get_global_rect().has_point(pos):
+			return i
+	return -1
+
+
+# Hover moves focus only in pointer mode, after the pointer rests on a tile.
+func _on_pointer_move(pos: Vector2) -> void:
+	var im := _input_mode()
+	if im == null or im.mode != InputModeScript.Mode.POINTER:
+		_hover = -1
+		return
+	var i := tile_at(pos)
+	if i == _hover:
+		return
+	_hover = i
+	_dwell_timer.stop()
+	if i >= 0 and i != focus:
+		_hover_since = im.now_ms()
+		_dwell_timer.start(Tokens.HOVER_DWELL)
+
+
+func resolve_dwell() -> void:
+	var im := _input_mode()
+	if _hover < 0 or im == null or im.mode != InputModeScript.Mode.POINTER:
+		return
+	if im.now_ms() - _hover_since >= int(Tokens.HOVER_DWELL * 1000):
+		set_focus(_hover)
+
+
+func _input_mode() -> Node:
+	return get_node_or_null("/root/InputMode")
+
+
+func _ignore_mouse(n: Node) -> void:
+	if n is Control:
+		n.mouse_filter = MOUSE_FILTER_IGNORE
+	for c in n.get_children():
+		_ignore_mouse(c)
 
 
 func set_focus(i: int) -> void:
@@ -203,26 +295,74 @@ func _build_hints() -> Control:
 	var bar := HBoxContainer.new()
 	bar.alignment = BoxContainer.ALIGNMENT_END
 	bar.add_theme_constant_override("separation", Tokens.HINT_GAP)
-	bar.add_child(_hint("A", "Open"))
-	bar.add_child(_hint("B", "Menu"))
+	bar.add_child(_hint("Open"))
+	bar.add_child(_hint("Menu"))
 	return _margin(bar)
 
 
-func _hint(key: String, text: String) -> Control:
+func _hint(text: String) -> Control:
 	var h := HBoxContainer.new()
 	h.add_theme_constant_override("separation", Tokens.HINT_KEY_GAP)
 	var pill := PanelContainer.new()
 	pill.custom_minimum_size = Vector2(Tokens.KEY, Tokens.KEY)
-	pill.add_theme_stylebox_override("panel", _box(Tokens.KEY_BG, Tokens.KEY / 2))
-	var k := _label(key, Tokens.mono(500, Tokens.KEY_FONT), Tokens.KEY_FONT, Tokens.TEXT)
+	pill.size_flags_vertical = SIZE_SHRINK_CENTER
+	var k := _label("", Tokens.mono(500, Tokens.KEY_FONT), Tokens.KEY_FONT, Tokens.TEXT)
+	k.name = "Text"
 	k.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	k.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	pill.add_child(k)
+	var g := TextureRect.new()
+	g.name = "Glyph"
+	g.custom_minimum_size = Vector2(Tokens.KEY_FONT, Tokens.KEY_FONT)
+	g.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	g.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	g.size_flags_horizontal = SIZE_SHRINK_CENTER
+	g.size_flags_vertical = SIZE_SHRINK_CENTER
+	pill.add_child(g)
+	_hint_keys.append(pill)
 	h.add_child(pill)
 	var t := _label(text, Tokens.sans(400, Tokens.HINT), Tokens.HINT, Tokens.MUTED)
 	t.size_flags_vertical = SIZE_SHRINK_CENTER
 	h.add_child(t)
 	return h
+
+
+# Key labels follow the input mode: the remote and keyboard share "OK" and
+# "Back"; pads get their face buttons. Order matches the hints: accept, back.
+const HINT_KEYS := {
+	"remote": ["OK", "Back"],
+	"xbox": ["A", "B"],
+	"playstation": ["ps-cross", "ps-circle"],
+}
+
+
+func _set_hint_style(style: String) -> void:
+	_hint_style = style if HINT_KEYS.has(style) else "remote"
+	_fill_hint_keys()
+
+
+func hint_labels() -> Array:
+	return HINT_KEYS[_hint_style]
+
+
+func _fill_hint_keys() -> void:
+	var keys: Array = HINT_KEYS[_hint_style]
+	var glyphs := _hint_style == "playstation"
+	for i in _hint_keys.size():
+		var pill := _hint_keys[i]
+		var sb := _box(Tokens.KEY_BG, Tokens.KEY / 2)
+		if _hint_style == "remote":
+			sb.content_margin_left = Tokens.KEY_PAD_KEYBOARD
+			sb.content_margin_right = Tokens.KEY_PAD_KEYBOARD
+		pill.add_theme_stylebox_override("panel", sb)
+		var text: Label = pill.get_node("Text")
+		var g: TextureRect = pill.get_node("Glyph")
+		text.visible = not glyphs
+		g.visible = glyphs
+		if glyphs:
+			g.texture = Glyphs.texture(keys[i], Tokens.TEXT, Tokens.KEY_FONT, Tokens.STATUS_STROKE, _scale)
+		else:
+			text.text = keys[i]
 
 
 # Helpers ---------------------------------------------------------------------
@@ -277,6 +417,7 @@ func _raster_glyphs() -> void:
 		var tr: TextureRect = tiles[i].get_node("Holder/Tile/Glyph")
 		tr.texture = Glyphs.texture(Glyphs.name_for(app), app.accent, Tokens.GLYPH, Tokens.GLYPH_STROKE, s)
 	_wifi.texture = Glyphs.texture("wifi", Tokens.STATUS, Tokens.STATUS_ICON, Tokens.STATUS_STROKE, _scale)
+	_fill_hint_keys()
 
 
 func _display_scale() -> float:

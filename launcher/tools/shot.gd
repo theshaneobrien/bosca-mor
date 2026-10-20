@@ -1,7 +1,8 @@
 # Renders a named screen state to PNG at any output size, scaled from the
 # 1920x1080 base the same way canvas_items stretch scales the window.
 # godot --path launcher -s res://tools/shot.gd -- --state=home --size=1920x1080 --out=../shots/home.png
-# Options: --focus=N (focused tile), --apps=PATH (apps.json to use)
+# Options: --focus=N (focused tile), --apps=PATH (apps.json to use),
+# --hints=remote|xbox|playstation (hint key style)
 extends SceneTree
 
 const Tokens := preload("res://theme/tokens.gd")
@@ -15,7 +16,7 @@ func _initialize() -> void:
 
 
 func _shoot() -> void:
-	var opts := {"state": "home", "size": "1920x1080", "out": "../shots/home.png", "focus": "", "apps": ""}
+	var opts := {"state": "home", "size": "1920x1080", "out": "../shots/home.png", "focus": "", "apps": "", "hints": ""}
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--") and a.contains("="):
 			var kv := a.substr(2).split("=", true, 1)
@@ -41,6 +42,8 @@ func _shoot() -> void:
 	vp.add_child(screen)
 	if not opts.focus.is_empty():
 		screen.set_focus(int(opts.focus))
+	if not opts.hints.is_empty():
+		screen._set_hint_style(opts.hints)
 
 	for i in 4:
 		await process_frame
