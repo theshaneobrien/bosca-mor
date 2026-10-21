@@ -197,6 +197,14 @@ const OSK_KEY_GAP := 10
 const OSK_FONT := 30
 const OSK_FIELD := 80
 
+# Loading screen while an app opens (D76: no design; the tile and hero tokens)
+const LOADER_DELAY := 0.5           # only for apps that take longer than this
+const LOADER_DOT := 12
+const LOADER_DOT_GAP := 16
+const LOADER_DOT_STEP := 0.25       # each dot's rise and fall
+const LOADER_DOT_DIM := 0.25
+const LOADER_FPS := 30              # frame cap while it shows, to leave the CPU to the app
+
 # Toast (D62: no design; built from the dialog, button and menu tokens)
 const TOAST_HEIGHT := BUTTON
 const TOAST_PAD := STILL_ROW_PAD

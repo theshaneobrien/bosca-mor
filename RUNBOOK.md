@@ -18,6 +18,7 @@
 | Spec gaps | done | Last tile in state.json (D61), keep_screen_on off, toasts (D62), 15 s launch timeout with the daemon's `app_window` and `launch_timeout` events (D63). 106 launcher tests, 51 daemon tests (WSL) including the round trip. Not in a release yet |
 | Fix: first box test | done | Full screen by default; Settings from the sidebar closes it; no daemon on Linux shows a toast; launch waits black for the app window, Desktop fades first (D65 to D68); installer starts the daemon from autostart and adds a menu entry. 121 launcher tests, 59 daemon tests |
 | Fix: second box test | done | No splash; hover selects tiles; the launcher stays black behind apps and the daemon hands them the focus (D69); Return waits for save prompts (D70); minimise effect off (D71); Add app is Flatpaks and websites (D72); Remove (D73). 129 launcher tests, 65 daemon tests |
+| Loading screen | done | "Opening <name>" with the tile and pulsing dots on the black while an app starts, from 0.5 s, at up to 30 fps (D76). 132 launcher tests |
 
 ## Rebuilding the launcher
 
@@ -90,6 +91,7 @@ What the first box report confirmed: Mint 22.3, X11, Python 3.12, 1920x1080 at 6
 - [ ] Launch an app: no minimise animation and no desktop in between; the keyboard works in the app at once, with no click needed (D69). Closing the app brings the launcher straight back.
 - [ ] Desktop hides the launcher with no animation (D71).
 - [ ] Return to the launcher with an unsaved editor: the save prompt stays in front until you answer it; the launcher comes back once the editor closes (D70).
+- [ ] Open a slow app (Jellyfin, Spotify, RetroArch): after the fade the loading screen shows its tile, "Opening <name>" and pulsing dots, until the app appears. Plex may open before it shows at all (D76).
 - [ ] If you install the boot splash: the picture shows centred on dark blue at start and at shut down. The Plymouth script couldn't be run on the dev machine, so if the screen stays plain dark blue or shows text, run `--restore` and tell the next session (D75).
 - [ ] Settings > Apps > Add app lists only Flatpaks, plus "A website"; add one website (name with a space, then its address) and open it; then remove it with Remove (D72, D73).
 

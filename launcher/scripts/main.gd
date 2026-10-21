@@ -15,6 +15,7 @@ const Motion := preload("res://scripts/motion.gd")
 const SettingsView := preload("res://scripts/settings.gd")
 const Prefs := preload("res://scripts/prefs.gd")
 const StillOpen := preload("res://scripts/still_open.gd")
+const Loader := preload("res://scripts/loader.gd")
 const Apps := preload("res://scripts/apps.gd")
 const Toast := preload("res://scripts/toast.gd")
 
@@ -33,6 +34,7 @@ var confirm: Control
 var settings: Control
 var still: Control
 var toast: Control
+var loader: Control
 var daemon: Node
 var _launched := {}                # the app last sent to the daemon, for its name
 var _off: ColorRect
@@ -49,6 +51,7 @@ var _cover: ColorRect              # black over everything while going to the de
 ## the tree paused, with only the daemon poll timer running.
 var is_hidden := false
 var _shown_sleep_usec := 0
+var _asleep := false               # tree paused and long main-loop sleeps
 var _removing := {}               # the app the remove confirm is about
 var _panel_running := false        # a Cinnamon settings panel opened from Settings
 
@@ -66,6 +69,8 @@ func _ready() -> void:
 	home.apps_path = apps_path
 	home.state_path = state_path
 	add_child(home)
+	loader = Loader.new()              # over Home's black launch fade
+	add_child(loader)
 	settings = SettingsView.new()
 	settings.apps_path = apps_path
 	settings.state_path = state_path
@@ -160,15 +165,30 @@ func _on_launch_faded() -> void:
 # Paused and black, but still on screen until the app's window is up, so the
 # desktop never shows between Home and the app.
 func _await_window() -> void:
-	hide_launcher(false)
-	waiting_for_window = not _window_seen
+	if _window_seen:
+		hide_launcher(false)
+		return
+	# Off screen for the daemon (Home closes the app), but still drawing the
+	# loading screen, at a capped frame rate, until the app's window is up (D76).
+	_leave()
+	waiting_for_window = true
+	loader.start(_launched)
+	Engine.max_fps = Tokens.LOADER_FPS
 
 
 # The daemon has raised the app's first window above the launcher, which
 # stays where it is: black, paused, behind the app (D69).
 func _on_app_window(_app_id: String) -> void:
 	_window_seen = true
-	waiting_for_window = false
+	if waiting_for_window:
+		waiting_for_window = false
+		_stop_loader()
+		_sleep(false)
+
+
+func _stop_loader() -> void:
+	loader.stop()
+	Engine.max_fps = 0
 
 
 ## The name to show for an app id: the launched app, then Home's tiles.
@@ -232,6 +252,12 @@ func _on_power_pressed() -> void:
 func hide_launcher(minimize := true) -> void:
 	if is_hidden:
 		return
+	_leave()
+	_sleep(minimize)
+
+
+# Off screen as far as the daemon is concerned: it acts on Home now.
+func _leave() -> void:
 	is_hidden = true
 	daemon.set_visible(false)
 	home.save_focus()
@@ -239,6 +265,13 @@ func hide_launcher(minimize := true) -> void:
 	confirm.close(false)
 	toast.hold()
 	Motion.stop_all()
+
+
+# Nothing left to draw: pause, sleep longer, and minimise if asked.
+func _sleep(minimize: bool) -> void:
+	if _asleep:
+		return
+	_asleep = true
 	_shown_sleep_usec = OS.low_processor_usage_mode_sleep_usec
 	OS.low_processor_usage_mode_sleep_usec = Tokens.HIDDEN_SLEEP_USEC
 	get_tree().paused = true
@@ -252,11 +285,14 @@ func show_launcher() -> void:
 		return
 	is_hidden = false
 	waiting_for_window = false
+	_stop_loader()
 	get_tree().paused = false
 	Motion.stop(_cover, "color:a")
 	_cover.color.a = 0.0
 	_cover.visible = false
-	OS.low_processor_usage_mode_sleep_usec = _shown_sleep_usec
+	if _asleep:
+		_asleep = false
+		OS.low_processor_usage_mode_sleep_usec = _shown_sleep_usec
 	_restore_window()
 	if not home.is_launching():
 		home.set_focus(home.focus, false)   # settle anything a stopped tween left

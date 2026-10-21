@@ -12,14 +12,14 @@ const Tokens := preload("res://theme/tokens.gd")
 const MainScene := preload("res://scenes/main.tscn")
 const InputModeScript := preload("res://scripts/input_mode.gd")
 const Motion := preload("res://scripts/motion.gd")
-const STATES := ["home", "menu", "power", "restart", "settings", "osk", "stillopen", "forceclose", "toast"]
+const STATES := ["home", "menu", "power", "restart", "settings", "osk", "stillopen", "forceclose", "loading", "toast"]
 # The two windows in the design's Still open screen.
 const STILL := [
 	{"wid": "0x3a00007", "name": "LibreOffice Writer", "icon": "libreoffice-writer", "asking": true},
 	{"wid": "0x4400002", "name": "Text Editor", "icon": "accessories-text-editor", "asking": false},
 ]
 # Defaults that match the design references.
-const FOCUS := {"home": 0, "menu": 2, "power": 0, "restart": 0, "settings": 0, "osk": 0, "stillopen": 0, "forceclose": 0, "toast": 2}
+const FOCUS := {"home": 0, "menu": 2, "power": 0, "restart": 0, "settings": 0, "osk": 0, "stillopen": 0, "forceclose": 0, "toast": 2, "loading": 1}
 
 
 func _initialize() -> void:
@@ -58,7 +58,7 @@ func _shoot() -> void:
 	vp.add_child(main)
 	main.animate = false
 	main.daemon.stub_delay = -1.0
-	main.home.set_focus(int(opts.focus) if opts.focus else FOCUS[opts.state], false)
+	main.home.set_focus(int(opts.focus) if opts.focus else FOCUS.get(opts.state, 0), false)
 	await _frames()
 
 	# The sidebar blur captures what was drawn last, so Home renders first.
@@ -78,6 +78,15 @@ func _shoot() -> void:
 				st.col = 1
 				st._accept()
 			st._render()
+		"loading":
+			# The black after launching Plex, its loading screen mid-pulse (D76).
+			main.home.set_focus(1, false)
+			main.home.launch()
+			for t in get_processed_tweens():
+				t.custom_step(10.0)
+			main.loader.reveal()
+			for t in get_processed_tweens():
+				t.custom_step(0.6)
 		"stillopen", "forceclose":
 			main._on_still_open(STILL)
 			if opts.state == "forceclose":
