@@ -218,7 +218,7 @@ cinnamon() {
 		fi
 	fi
 
-	step "5. Cinnamon key bindings on Home, Back, Menu or Super+Home"
+	step "5. Cinnamon key bindings on Home, Back, Menu, Super+Home or Power"
 	if ! have gsettings; then warn "no gsettings: check the media keys by hand"; return; fi
 	local schema key value cleared found=0 schemas=0
 	for schema in "${MEDIA_SCHEMAS[@]}"; do
@@ -240,7 +240,8 @@ cinnamon() {
 	fi
 }
 
-# Drops HomePage, Back, Menu and Super+Home from a gsettings accelerator list.
+# Drops HomePage, Back, Menu, Super+Home and the power key (Cinnamon binds
+# XF86PowerOff to its own shutdown dialog) from a gsettings accelerator list.
 clear_accels() {
 	python3 - "$1" <<'PY'
 import ast, re, sys
@@ -253,7 +254,7 @@ except (ValueError, SyntaxError):
     print(sys.argv[1]); sys.exit()
 if not isinstance(accels, list):
     print(sys.argv[1]); sys.exit()
-taken = re.compile(r"^(XF86HomePage|XF86Back|Menu|<(Super|Mod4)>Home)$", re.I)
+taken = re.compile(r"^(XF86HomePage|XF86Back|XF86PowerOff|Menu|<(Super|Mod4)>Home)$", re.I)
 kept = [a for a in accels if not taken.match(a)]
 if kept == accels:
     print(sys.argv[1])
@@ -291,6 +292,7 @@ files() {
 		todo "create $DEST/ owned by $USER_NAME, for tools/deploy.sh"
 		as_root install -d -o "$USER_NAME" -g "$(id -gn)" -m 0755 "$DEST"
 	fi
+	local daemon_before=$CHANGES
 	put_file "$DEST/boscamor-input.py" 0755 "$(cat "$ROOT/daemon/boscamor-input.py")"
 	if [ -f "$ROOT/build/boscamor" ]; then
 		if [ -f "$DEST/boscamor" ] && cmp -s "$ROOT/build/boscamor" "$DEST/boscamor"; then ok "$DEST/boscamor"; else
@@ -313,12 +315,20 @@ files() {
 	local before=$CHANGES
 	put_file "$unit" 0644 "$(cat "$FILES/boscamor-input.service")"
 	if [ "$CHANGES" != "$before" ]; then run systemctl --user daemon-reload; fi
-	if have systemctl && systemctl --user is-enabled boscamor-input.service >/dev/null 2>&1; then
-		ok "boscamor-input.service enabled"
-	else
-		todo "enable boscamor-input.service"
-		run systemctl --user enable boscamor-input.service
+	# Cinnamon never starts graphical-session.target, so the session's own
+	# autostart starts the daemon (D67).
+	put_file "$HOME_DIR/.config/autostart/boscamor-input.desktop" 0644 "$(cat "$FILES/boscamor-input.desktop")"
+	if [ "$CHANGES" != "$daemon_before" ]; then
+		echo "          restarting the daemon so the new files take effect"
+		if [ "$DRY" = 1 ]; then
+			echo "          \$ systemctl --user restart boscamor-input.service"
+		elif ! systemctl --user restart boscamor-input.service 2>/dev/null; then
+			warn "could not start boscamor-input.service now; it starts at the next login"
+		fi
 	fi
+
+	step "7. Launcher in the menu"
+	put_file "$HOME_DIR/.local/share/applications/boscamor-launcher.desktop" 0644 "$(cat "$FILES/boscamor-launcher.desktop")"
 
 	step "7. Return shortcut, in the menu and on the desktop"
 	local shortcut

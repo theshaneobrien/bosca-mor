@@ -101,9 +101,13 @@ func test_desktop_hides_and_frees_the_blur() -> void:
 	main.state.set_sidebar_focus(2)
 	_act("accept")
 	eq(main.state.screen, State.Screen.DESKTOP, "desktop")
+	check(not main.is_hidden, "still shown while it fades to black")
+	check(main._cover.visible, "black cover fading in")
+	_finish_tweens()
 	_check_hidden("desktop")
 	main.daemon.show_home.emit()
 	_check_shown("Home pressed")
+	check(not main._cover.visible, "cover gone on the way back")
 	eq(main.state.screen, State.Screen.HOME, "Home screen")
 	check(main.home.accepting_input, "Home has focus")
 	_teardown()
@@ -179,3 +183,45 @@ func test_clock_timer_aligned_to_minute() -> void:
 	check(absf(left - (60 - sec)) <= 1.0, "next tick at the minute: %s s left at :%02d" % [left, sec])
 	check(main.home._clock_timer.one_shot, "re-aimed each minute, so it never drifts")
 	_teardown()
+
+
+# Box test: the desktop showed between Home and the app while the launcher
+# minimised. Now it stays up, black, until the app's window is there.
+func test_launch_waits_for_the_app_window() -> void:
+	await _setup()
+	_act("accept")
+	_finish_tweens()
+	_check_hidden("after the launch fade")
+	check(main.waiting_for_window, "black and waiting for the app's window")
+	main.daemon.app_window.emit("youtube")
+	check(not main.waiting_for_window, "app window up: minimise behind it")
+	check(main.is_hidden, "still hidden")
+	main.daemon.app_exited.emit("youtube", 0)
+	_check_shown("app closed")
+	_teardown()
+
+
+func test_fast_app_window_before_the_fade_ends() -> void:
+	await _setup()
+	_act("accept")
+	main.daemon.app_window.emit("youtube")
+	_finish_tweens()
+	check(main.is_hidden, "hidden")
+	check(not main.waiting_for_window, "window already up: no wait")
+	_teardown()
+
+
+func test_timeout_while_waiting_returns_home() -> void:
+	await _setup()
+	_act("accept")
+	_finish_tweens()
+	check(main.waiting_for_window, "waiting")
+	main.daemon.launch_timed_out.emit("youtube")
+	_check_shown("timed out")
+	check(not main.waiting_for_window, "wait over")
+	check(not main._minimized, "never minimised, so nothing to restore")
+	_teardown()
+
+
+func test_fullscreen_by_default() -> void:
+	eq(ProjectSettings.get_setting("display/window/size/mode"), DisplayServer.WINDOW_MODE_FULLSCREEN, "full screen without --fullscreen")

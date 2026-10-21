@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Launcher input daemon
+Comment=Starts the background service the TV launcher needs
+Exec=/usr/bin/systemctl --user restart boscamor-input.service
+Terminal=false
+NoDisplay=true
+X-GNOME-Autostart-enabled=true

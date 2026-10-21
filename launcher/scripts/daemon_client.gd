@@ -42,6 +42,9 @@ signal connected_changed(connected: bool)
 @export var runtime_dir := ""
 
 var calls: Array = []
+## Off Linux (the Windows dev machine) a launch with no daemon is faked. On the
+## box it fails with a toast, so a daemon that never started can't hide (D66).
+var stand_in := OS.get_name() != "Linux"
 var connected := false
 ## The app waiting for its first window, or "".
 var waiting_id := ""
@@ -77,6 +80,11 @@ func launch(app: Dictionary) -> void:
 	_window_deadline = _now_ms() + int(Tokens.LAUNCH_TIMEOUT * 1000.0)
 	if not _send({"cmd": "launch", "id": app.id, "argv": Apps.argv_for(app),
 			"keep_on_home": app.get("keep_on_home", false)}):
+		if not stand_in:
+			_stop_waiting(app.id)
+			push_warning("no daemon: cannot launch %s" % app.id)
+			launch_failed.emit.call_deferred(app.id, "the background service isn't running")
+			return
 		_later(func():
 			_stop_waiting(app.id)
 			app_exited.emit(app.id, 0))

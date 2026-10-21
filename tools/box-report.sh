@@ -88,6 +88,8 @@ report() {
 	section "Cinnamon power settings" sh -c 'gsettings list-recursively | grep -i -E "power|button"'
 	section "Cinnamon media keys" gsettings list-recursively org.cinnamon.desktop.keybindings.media-keys
 	section "Cinnamon bindings on Home, Back, Menu, Super" sh -c 'gsettings list-recursively | grep -i -E "homepage|back|menu|<super>home"'
+	section "Cinnamon window effects (minimise animation)" sh -c 'gsettings list-recursively | grep -i -E "effect|animation"'
+	section "Installer log (install/install.sh 2>&1 | tee ~/install.log)" cat "$REAL_HOME/install.log"
 
 	echo "  login, session and services (installer step 6, daemon service)"
 	section "LightDM" sh -c 'cat /etc/lightdm/lightdm.conf /etc/lightdm/lightdm.conf.d/*.conf'

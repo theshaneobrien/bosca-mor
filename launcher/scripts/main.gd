@@ -37,7 +37,13 @@ var daemon: Node
 var _launched := {}                # the app last sent to the daemon, for its name
 var _off: ColorRect
 var _off_text: Label
-var _window_mode := Window.MODE_WINDOWED
+var _window_mode := Window.MODE_FULLSCREEN
+var _minimized := false
+## After the launch fade the launcher stays full screen and black until the
+## daemon says the app's window is up, then minimises behind it (D65).
+var waiting_for_window := false
+var _window_seen := false
+var _cover: ColorRect              # black over everything while going to the desktop
 ## True while an app or the desktop is in front: the window is minimised and
 ## the tree paused, with only the daemon poll timer running.
 var is_hidden := false
@@ -71,6 +77,12 @@ func _ready() -> void:
 	toast = Toast.new()
 	add_child(toast)
 	_build_off()
+	_cover = ColorRect.new()
+	_cover.size = Tokens.BASE_SIZE
+	_cover.color = Color(Tokens.BLACK, 0.0)
+	_cover.visible = false
+	_cover.mouse_filter = MOUSE_FILTER_IGNORE
+	add_child(_cover)
 
 	state.changed.connect(_on_changed)
 	state.sidebar_focus_changed.connect(sidebar.set_focus)
@@ -82,7 +94,8 @@ func _ready() -> void:
 	settings.prefs_changed.connect(apply_prefs)
 	settings.launch_panel.connect(_launch_panel)
 	home.launch_requested.connect(_launch)
-	home.launch_faded.connect(hide_launcher)
+	home.launch_faded.connect(_on_launch_faded)
+	daemon.app_window.connect(_on_app_window)
 	daemon.app_exited.connect(_on_app_exited)
 	daemon.launch_failed.connect(_on_launch_failed)
 	daemon.launch_timed_out.connect(_on_launch_timed_out)
@@ -124,13 +137,36 @@ func _on_memory_warning(app_id: String, mb: int) -> void:
 
 func _launch(app: Dictionary) -> void:
 	_launched = app
+	_window_seen = false
 	daemon.launch(app)
 
 
 func _launch_panel(app: Dictionary) -> void:
 	_panel_running = true
 	_launch(app)
-	hide_launcher()
+	_await_window()
+
+
+func _on_launch_faded() -> void:
+	_await_window()
+
+
+# Paused and black, but still on screen until the app's window is up, so the
+# desktop never shows between Home and the app.
+func _await_window() -> void:
+	hide_launcher(false)
+	if _window_seen:
+		_minimize_window()
+	else:
+		waiting_for_window = true
+
+
+# The daemon has raised the app's first window: minimise behind it.
+func _on_app_window(_app_id: String) -> void:
+	_window_seen = true
+	if waiting_for_window:
+		waiting_for_window = false
+		_minimize_window()
 
 
 ## The name to show for an app id: the launched app, then Home's tiles.
@@ -188,9 +224,10 @@ func _on_power_pressed() -> void:
 
 # Hidden and shown (SPEC Resource use) ------------------------------------------
 
-## After the launch fade, or on Desktop: minimise, pause, free the blur and
-## stop tweens, and sleep longer between main-loop wakeups.
-func hide_launcher() -> void:
+## After the launch fade, or on Desktop: pause, free the blur and stop
+## tweens, sleep longer between main-loop wakeups, and minimise (unless an
+## app's window is still on its way).
+func hide_launcher(minimize := true) -> void:
 	if is_hidden:
 		return
 	is_hidden = true
@@ -203,7 +240,8 @@ func hide_launcher() -> void:
 	_shown_sleep_usec = OS.low_processor_usage_mode_sleep_usec
 	OS.low_processor_usage_mode_sleep_usec = Tokens.HIDDEN_SLEEP_USEC
 	get_tree().paused = true
-	_minimize_window()   # last: minimising can deliver window events at once
+	if minimize:
+		_minimize_window()   # last: minimising can deliver window events at once
 
 
 ## The reverse: unpause first so the return fade can run.
@@ -211,7 +249,11 @@ func show_launcher() -> void:
 	if not is_hidden:
 		return
 	is_hidden = false
+	waiting_for_window = false
 	get_tree().paused = false
+	Motion.stop(_cover, "color:a")
+	_cover.color.a = 0.0
+	_cover.visible = false
 	OS.low_processor_usage_mode_sleep_usec = _shown_sleep_usec
 	_restore_window()
 	if not home.is_launching():
@@ -278,6 +320,9 @@ func _on_changed(to: State.Screen, from: State.Screen) -> void:
 	if to != State.Screen.STILL_OPEN and not (to == State.Screen.CONFIRM and state.confirm_kind == "forceclose"):
 		still.close()
 	match to:
+		State.Screen.SETTINGS:
+			sidebar.close(animate)
+			confirm.close(animate)
 		State.Screen.HOME:
 			sidebar.close(animate)
 			confirm.close(animate)
@@ -299,17 +344,12 @@ func _on_changed(to: State.Screen, from: State.Screen) -> void:
 			confirm.close(animate)
 			sidebar.close(false)
 		State.Screen.DESKTOP:
-			sidebar.close(false)
-			confirm.close(false)
-			var wids: Array = still.wids()
-			hide_launcher()
-			match state.desktop_reason:
-				"show_me":
-					daemon.show_window(wids[0] if wids else "")
-				"back":
-					daemon.back_to_desktop()
-				_:
-					daemon.show_desktop()
+			# Fade to black first, so minimising isn't the first thing seen.
+			if animate:
+				_cover.visible = true
+				Motion.to(_cover, "color:a", 1.0, "launch").finished.connect(_to_desktop)
+			else:
+				_to_desktop()
 		State.Screen.OFF:
 			sidebar.close(false)
 			confirm.close(false)
@@ -317,6 +357,22 @@ func _on_changed(to: State.Screen, from: State.Screen) -> void:
 			_off.visible = true
 			home.save_focus()
 			daemon.power(state.confirm_kind)
+
+
+func _to_desktop() -> void:
+	if state.screen != State.Screen.DESKTOP or is_hidden:
+		return
+	sidebar.close(false)
+	confirm.close(false)
+	var wids: Array = still.wids()
+	hide_launcher()
+	match state.desktop_reason:
+		"show_me":
+			daemon.show_window(wids[0] if wids else "")
+		"back":
+			daemon.back_to_desktop()
+		_:
+			daemon.show_desktop()
 
 
 func _pointer_mode() -> bool:
@@ -341,15 +397,20 @@ func _build_off() -> void:
 func _minimize_window() -> void:
 	if DisplayServer.get_name() == "headless" or get_viewport() != get_window():
 		return
+	if _minimized:
+		return
 	_window_mode = get_window().mode
 	get_window().mode = Window.MODE_MINIMIZED
+	_minimized = true
 
 
+## Restores only a window this script minimised: one that stayed up black
+## while an app failed to open keeps its mode.
 func _restore_window() -> void:
-	if DisplayServer.get_name() == "headless" or get_viewport() != get_window():
+	if DisplayServer.get_name() == "headless" or get_viewport() != get_window() or not _minimized:
 		return
+	_minimized = false
 	get_window().mode = _window_mode
-	get_window().move_to_foreground()
 	get_window().grab_focus()
 
 
@@ -363,5 +424,5 @@ func _notification(what: int) -> void:
 
 
 func _refocused() -> void:
-	if state.screen == State.Screen.DESKTOP and get_window().mode != Window.MODE_MINIMIZED 			and DisplayServer.get_name() != "headless":
+	if state.screen == State.Screen.DESKTOP and get_window().mode != Window.MODE_MINIMIZED and DisplayServer.get_name() != "headless":
 		state.show_home()

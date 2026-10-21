@@ -47,6 +47,8 @@ class TestFirstWindow(LaunchCase):
         self.d.open_windows.append(PLEX)
         self.at(1.0)
         self.assertEqual(self.d.events("app_window"), [{"evt": "app_window", "id": "plex"}])
+        self.assertIn(["wmctrl", "-i", "-a", bi.norm_wid(PLEX)], self.d.ran,
+                      "raised above the waiting launcher (D65)")
         calls = self.d.xprop_calls
         self.at(1.5)
         self.at(20.0)

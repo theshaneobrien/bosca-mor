@@ -720,6 +720,9 @@ class Daemon:
             if is_app_window(self.window_props(wid)):
                 log.info("%s showed window %s", app.id, wid)
                 app.window_deadline = None
+                # Above the launcher, which waits full screen and black, then
+                # minimises behind it (D65).
+                self.run_cmd(["wmctrl", "-i", "-a", wid])
                 self.send({"evt": "app_window", "id": app.id})
                 return
         if now >= app.window_deadline:

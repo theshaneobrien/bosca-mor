@@ -381,3 +381,32 @@ func test_return_with_nothing_left_shows_home() -> void:
 	eq(main.state.screen, S.HOME, "Home")
 	check(main.home._fade.visible, "with the return fade")
 	_teardown()
+
+
+# Box test: Settings from the sidebar left the sidebar on top, so Settings
+# took input unseen and needed two or three Backs to leave.
+func test_settings_from_the_sidebar_closes_it() -> void:
+	await _setup()
+	_start(S.SIDEBAR)
+	main.state.set_sidebar_focus(1)
+	_act("accept")
+	eq(main.state.screen, S.SETTINGS, "Settings")
+	check(not main.sidebar.visible and not main.sidebar.is_open, "sidebar closed")
+	check(main.settings.visible, "Settings shown")
+	eq(main.home.scale, Vector2.ONE, "Home no longer shrunk behind")
+	_act("back")
+	eq(main.state.screen, S.HOME, "one Back from the section list returns Home")
+	_teardown()
+
+
+# Box test: with no daemon, every launch pretended to work. On Linux it now
+# fails with a toast.
+func test_no_daemon_on_linux_fails_visibly() -> void:
+	await _setup()
+	main.daemon.stand_in = false
+	_start(S.HOME)
+	_act("accept")
+	await tree.process_frame
+	check(not main.home.is_launching(), "back on Home")
+	check(main.toast.visible, "toast shown")
+	_teardown()

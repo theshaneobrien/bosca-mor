@@ -16,6 +16,7 @@
 | 10 Jellyfin TV mode | done | Args from the upstream desktop file Flathub builds (D59), not yet read on the box; 90 launcher tests. Release v0.10.0 carries the Linux build |
 | 1 fix: paths helper and dev IPC | done | `launcher/scripts/paths.gd` and the daemon's `paths()` build every path and honour `BOSCAMOR_HOME` (layout in D60); `--dev-port` and `BOSCAMOR_IPC` added, and the launcher round trip now uses them. 99 launcher tests, 47 daemon tests (WSL). `BOSCAMOR_HOME=dev-home` seeds `dev-home/config/apps.json` on first run |
 | Spec gaps | done | Last tile in state.json (D61), keep_screen_on off, toasts (D62), 15 s launch timeout with the daemon's `app_window` and `launch_timeout` events (D63). 106 launcher tests, 51 daemon tests (WSL) including the round trip. Not in a release yet |
+| Fix: first box test | done | Full screen by default; Settings from the sidebar closes it; no daemon on Linux shows a toast; launch waits black for the app window, Desktop fades first (D65 to D68); installer starts the daemon from autostart and adds a menu entry. 121 launcher tests, 59 daemon tests |
 
 ## Rebuilding the launcher
 
@@ -65,6 +66,13 @@ tools/box-report.sh --all
 Before it starts, open Firefox (one tab), LibreOffice Writer with unsaved text and its "Save changes?" prompt showing, and a text editor with unsaved text. It asks you to press each remote and pad button (Enter on a keyboard skips one), measures the launcher and daemon for the budgets, and writes `~/box-report-<date>.tar.gz`. Copy that back to the dev machine. It answers the G20S keycodes, the input devices and xprop fixtures, the Cinnamon power and key settings, the session type, whether the daemon service started, the Jellyfin TV entries, installed icons and the budgets. The key capture is untested here (no input devices in WSL), so tell the next session if it misbehaves.
 
 - [ ] Run `tools/box-report.sh --all` and copy the `.tar.gz` back (all steps).
+
+**First box test, 21 Oct 2026 (v0.11.0).** The installer hadn't run (no `/opt/boscamor`, autostart, service, input group or logind drop-in), so the launcher ran windowed with no daemon. Fixed since: full screen by default, Settings from the sidebar, a toast when the daemon is missing, and a smoother hand-off to apps. To do on the box with the next release:
+
+- [ ] Run the installer and keep its output: `install/install.sh 2>&1 | tee ~/install.log`. If it stops, the log says where; the next box report includes it.
+- [ ] After the reboot the launcher opens full screen on its own, "Launcher" is in the menu, and `systemctl --user status boscamor-input` is active (started by the autostart entry, D67).
+- [ ] Launching an app: the screen goes black and the app appears with no desktop or minimise animation in between (D65). If the minimise still shows, the box report's "Cinnamon window effects" section has what's needed to turn it off.
+- [ ] Settings from the sidebar opens straight away and one Back from the section list returns Home.
 
 - [ ] Run `evtest` on the G20S dongle and record its keycodes here (step 2). Bound now: arrows, Enter, Esc, Backspace, `KEY_BACK`, `KEY_MENU`, Home, `KEY_HOMEPAGE`. Godot has no `KEY_COMPOSE`; SPEC says X11 delivers it as Menu, so check that with F12.
 - [ ] Press every G20S button with the F12 overlay open and check the action shown matches SPEC "Input model" (step 2).
