@@ -11,10 +11,12 @@ config_version=5
 [application]
 
 config/name="Launcher"
-config/version="0.11.1"
+config/version="0.11.2"
 run/main_scene="res://scenes/main.tscn"
 config/features=PackedStringArray("4.7", "GL Compatibility")
 run/low_processor_mode=true
+boot_splash/show_image=false
+boot_splash/bg_color=Color(0.0470588, 0.0470588, 0.0784314, 1)
 
 [autoload]
 

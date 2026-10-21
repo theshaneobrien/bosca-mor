@@ -1,0 +1,5 @@
+_NET_WM_WINDOW_TYPE(ATOM) = _NET_WM_WINDOW_TYPE_NORMAL
+WM_CLASS(STRING) = "nemo", "Nemo"
+_NET_WM_NAME(UTF8_STRING) = "files on server.local"
+WM_NAME(STRING) = "files on server.local"
+WM_TRANSIENT_FOR:  not found.

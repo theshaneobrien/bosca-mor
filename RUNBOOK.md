@@ -17,6 +17,7 @@
 | 1 fix: paths helper and dev IPC | done | `launcher/scripts/paths.gd` and the daemon's `paths()` build every path and honour `BOSCAMOR_HOME` (layout in D60); `--dev-port` and `BOSCAMOR_IPC` added, and the launcher round trip now uses them. 99 launcher tests, 47 daemon tests (WSL). `BOSCAMOR_HOME=dev-home` seeds `dev-home/config/apps.json` on first run |
 | Spec gaps | done | Last tile in state.json (D61), keep_screen_on off, toasts (D62), 15 s launch timeout with the daemon's `app_window` and `launch_timeout` events (D63). 106 launcher tests, 51 daemon tests (WSL) including the round trip. Not in a release yet |
 | Fix: first box test | done | Full screen by default; Settings from the sidebar closes it; no daemon on Linux shows a toast; launch waits black for the app window, Desktop fades first (D65 to D68); installer starts the daemon from autostart and adds a menu entry. 121 launcher tests, 59 daemon tests |
+| Fix: second box test | done | No splash; hover selects tiles; the launcher stays black behind apps and the daemon hands them the focus (D69); Return waits for save prompts (D70); minimise effect off (D71); Add app is Flatpaks and websites (D72); Remove (D73). 129 launcher tests, 65 daemon tests |
 
 ## Rebuilding the launcher
 
@@ -72,6 +73,15 @@ Before it starts, open Firefox (one tab), LibreOffice Writer with unsaved text a
 What the first box report confirmed: Mint 22.3, X11, Python 3.12, 1920x1080 at 60 Hz on DP-2, wired network only (the Wi-Fi icon hides), `DISPLAY` in the systemd user environment, and Jellyfin's TV [Fullscreen] entry is exactly `--fullscreen --tv` (step 10's args). Installed icons exist for YouTube, Jellyfin, Moonlight and RetroArch (SVG) and Plex and Music Assistant (256 px PNG). Not in it: the G20S and any pad were not plugged in (only an 8BitDo keyboard receiver and a Logitech G305), so no remote keycodes yet; no key capture, budgets, launcher window class or save-prompt fixtures.
 
 - [ ] Plug in the G20S (and any pad) before the next `tools/box-report.sh --all`, after the installer and a reboot, so the key capture records the remote.
+**Second box test, 21 Oct 2026 (v0.11.1).** The installer ran and the daemon worked (launch, first window, Home closing the browser, Return). Box captures of the launcher's own window (class `Godot_Engine`/`Launcher`), Nemo, Xed and a terminal are now test fixtures in `daemon/tests/fixtures/xprop-box/`. Fixed since, to check with the next release:
+
+- [ ] No Godot splash at start (D74).
+- [ ] With the mouse, resting on a tile selects it after a moment; clicking a tile opens it.
+- [ ] Launch an app: no minimise animation and no desktop in between; the keyboard works in the app at once, with no click needed (D69). Closing the app brings the launcher straight back.
+- [ ] Desktop hides the launcher with no animation (D71).
+- [ ] Return to the launcher with an unsaved editor: the save prompt stays in front until you answer it; the launcher comes back once the editor closes (D70).
+- [ ] Settings > Apps > Add app lists only Flatpaks, plus "A website"; add one website (name with a space, then its address) and open it; then remove it with Remove (D72, D73).
+
 - [ ] Run the installer and keep its output: `install/install.sh 2>&1 | tee ~/install.log`. If it stops, the log says where; the next box report includes it.
 - [ ] After the reboot the launcher opens full screen on its own, "Launcher" is in the menu, and `systemctl --user status boscamor-input` is active (started by the autostart entry, D67).
 - [ ] Launching an app: the screen goes black and the app appears with no desktop or minimise animation in between (D65). If the minimise still shows, the box report's "Cinnamon window effects" section has what's needed to turn it off.

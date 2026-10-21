@@ -49,6 +49,9 @@ class TestFirstWindow(LaunchCase):
         self.assertEqual(self.d.events("app_window"), [{"evt": "app_window", "id": "plex"}])
         self.assertIn(["wmctrl", "-i", "-a", bi.norm_wid(PLEX)], self.d.ran,
                       "raised above the waiting launcher (D65)")
+        self.d.active = PLEX          # Plex took the focus
+        self.at(1.5)
+        self.assertIsNone(self.d.app.activate_until, "focus hand-off done")
         calls = self.d.xprop_calls
         self.at(1.5)
         self.at(20.0)
@@ -162,3 +165,36 @@ class TestNoWindowList(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestFocusHandOff(LaunchCase):
+    """Box test: the app showed but the keyboard did nothing until a click.
+    The daemon keeps activating it until one of its windows has the focus (D69)."""
+
+    def raises(self):
+        return [r for r in self.d.ran if r == ["wmctrl", "-i", "-a", PLEX]]
+
+    def test_activates_until_the_app_has_the_focus(self):
+        self.d.open_windows.append(PLEX)
+        self.d.active = LAUNCHER      # Muffin left the focus on the launcher
+        self.at(0.5)
+        self.assertEqual(len(self.raises()), 1)
+        self.at(1.0)
+        self.at(1.5)
+        self.assertEqual(len(self.raises()), 3, "again every 500 ms")
+        self.d.active = PLEX
+        self.at(2.0)
+        self.at(2.5)
+        self.assertEqual(len(self.raises()), 3, "stops once Plex has the focus")
+        self.assertIsNone(self.d.app.activate_until)
+
+    def test_gives_up_after_three_seconds(self):
+        self.d.open_windows.append(PLEX)
+        self.d.active = LAUNCHER
+        for i in range(1, 12):
+            self.at(0.5 * i)
+        self.assertIsNone(self.d.app.activate_until, "gave up")
+        n = len(self.raises())
+        self.at(8.0)
+        self.assertEqual(len(self.raises()), n, "no more tries")
+        self.assertLessEqual(n, 1 + int(bi.ACTIVATE_FOR_S / bi.ACTIVATE_EVERY_S))

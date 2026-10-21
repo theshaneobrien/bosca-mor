@@ -39,8 +39,9 @@ var _off: ColorRect
 var _off_text: Label
 var _window_mode := Window.MODE_FULLSCREEN
 var _minimized := false
-## After the launch fade the launcher stays full screen and black until the
-## daemon says the app's window is up, then minimises behind it (D65).
+## After the launch fade the launcher stays full screen, black and paused
+## behind the app; it never minimises for an app (D65, D69). This is true
+## until the daemon says the app's window is up.
 var waiting_for_window := false
 var _window_seen := false
 var _cover: ColorRect              # black over everything while going to the desktop
@@ -48,6 +49,7 @@ var _cover: ColorRect              # black over everything while going to the de
 ## the tree paused, with only the daemon poll timer running.
 var is_hidden := false
 var _shown_sleep_usec := 0
+var _removing := {}               # the app the remove confirm is about
 var _panel_running := false        # a Cinnamon settings panel opened from Settings
 
 
@@ -93,6 +95,10 @@ func _ready() -> void:
 	settings.apps_changed.connect(home.reload)
 	settings.prefs_changed.connect(apply_prefs)
 	settings.launch_panel.connect(_launch_panel)
+	settings.remove_requested.connect(func(app):
+		_removing = app
+		state.ask("remove"))
+	state.remove_confirmed.connect(func(): settings.remove_app(_removing.get("id", "")))
 	home.launch_requested.connect(_launch)
 	home.launch_faded.connect(_on_launch_faded)
 	daemon.app_window.connect(_on_app_window)
@@ -155,18 +161,14 @@ func _on_launch_faded() -> void:
 # desktop never shows between Home and the app.
 func _await_window() -> void:
 	hide_launcher(false)
-	if _window_seen:
-		_minimize_window()
-	else:
-		waiting_for_window = true
+	waiting_for_window = not _window_seen
 
 
-# The daemon has raised the app's first window: minimise behind it.
+# The daemon has raised the app's first window above the launcher, which
+# stays where it is: black, paused, behind the app (D69).
 func _on_app_window(_app_id: String) -> void:
 	_window_seen = true
-	if waiting_for_window:
-		waiting_for_window = false
-		_minimize_window()
+	waiting_for_window = false
 
 
 ## The name to show for an app id: the launched app, then Home's tiles.
@@ -313,7 +315,10 @@ func _on_changed(to: State.Screen, from: State.Screen) -> void:
 	home.accepting_input = to == State.Screen.HOME
 	settings.accepting_input = to == State.Screen.SETTINGS
 	if to == State.Screen.SETTINGS:
-		settings.open()
+		if from == State.Screen.CONFIRM and state.confirm_kind == "remove":
+			settings.resume()        # back where it was, not reset to the top
+		else:
+			settings.open()
 	elif not (to == State.Screen.CONFIRM and from == State.Screen.SETTINGS):
 		settings.close()
 	# Still open stays under its force-close confirm.
@@ -339,7 +344,7 @@ func _on_changed(to: State.Screen, from: State.Screen) -> void:
 			if from in [State.Screen.HOME, State.Screen.SETTINGS]:
 				sidebar.capture()     # ready for Back, which returns to the sidebar
 			sidebar.close(animate, true)
-			confirm.open(state.confirm_kind, animate, still.apps.size())
+			confirm.open(state.confirm_kind, animate, still.apps.size(), _removing.get("name", ""))
 		State.Screen.STILL_OPEN:
 			confirm.close(animate)
 			sidebar.close(false)
@@ -394,7 +399,12 @@ func _build_off() -> void:
 	UI.ignore_mouse(_off)
 
 
+## How often the launcher asked to minimise (tests: never for an app, D69).
+var minimize_requests := 0
+
+
 func _minimize_window() -> void:
+	minimize_requests += 1
 	if DisplayServer.get_name() == "headless" or get_viewport() != get_window():
 		return
 	if _minimized:
@@ -407,10 +417,13 @@ func _minimize_window() -> void:
 ## Restores only a window this script minimised: one that stayed up black
 ## while an app failed to open keeps its mode.
 func _restore_window() -> void:
-	if DisplayServer.get_name() == "headless" or get_viewport() != get_window() or not _minimized:
+	if DisplayServer.get_name() == "headless" or get_viewport() != get_window():
 		return
-	_minimized = false
-	get_window().mode = _window_mode
+	if _minimized:
+		_minimized = false
+		get_window().mode = _window_mode
+	# Behind an app, or back from the desktop: take the focus (the daemon
+	# also raises this window with wmctrl, D69).
 	get_window().grab_focus()
 
 

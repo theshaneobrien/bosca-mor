@@ -27,9 +27,12 @@ class FakeX(Recorder):
         self.app_dirs = [APPS]
         self.clock = 1000.0
         self.xprop_calls = 0
+        self.active = None
 
     def run_capture(self, argv):
         self.xprop_calls += 1
+        if argv[:3] == ["xprop", "-root", "_NET_ACTIVE_WINDOW"]:
+            return "_NET_ACTIVE_WINDOW(WINDOW): window id # %s\n" % (self.active or "0x0")
         if argv[:2] == ["xprop", "-root"]:
             return "_NET_CLIENT_LIST(WINDOW): window id # " + ", ".join(self.open_windows) + "\n"
         if argv[:2] == ["xprop", "-id"]:
@@ -112,6 +115,7 @@ class TestReturnFlow(unittest.TestCase):
         d = self.d
         d.handle({"cmd": "return"})
         d.close_window("0x2a00003")
+        d.close_window("0x3a0012a")   # no save prompt up: nothing to wait for
         polls = 0
         t = 1000.0
         while d.returning and t < 1010:
@@ -121,9 +125,52 @@ class TestReturnFlow(unittest.TestCase):
             polls += 1
         self.assertEqual(polls, 20, "every 250 ms for 5 s")
         self.assertEqual(d.sent, [{"evt": "still_open", "apps": [
-            {"wid": "0x3a00007", "name": "LibreOffice Writer", "icon": "libreoffice-writer", "asking": True},
+            {"wid": "0x3a00007", "name": "LibreOffice Writer", "icon": "libreoffice-writer", "asking": False},
             {"wid": "0x4400002", "name": "Text Editor", "icon": "accessories-text-editor", "asking": False},
         ]}])
+
+    # Box test: the launcher came back over the editor's save prompt, which
+    # lost the focus. While a prompt is up, Return waits for the answer (D70).
+    def test_waits_while_a_save_prompt_is_up(self):
+        d = self.d
+        d.handle({"cmd": "return"})
+        d.close_window("0x2a00003")
+        d.close_window("0x4400002")   # Writer is left, asking to save
+        for i in range(1, 121):
+            d.clock = 1000.0 + i * 0.25
+            d.tick()
+        self.assertEqual(d.sent, [], "30 s on, still waiting for the answer")
+        self.assertIsNotNone(d.returning)
+        # The viewer answers Don't Save: the prompt and the window go.
+        d.close_window("0x3a0012a")
+        d.close_window("0x3a00007")
+        d.clock = 1030.25
+        d.tick()
+        self.assertEqual(d.sent, [{"evt": "show"}], "Home, with nothing left")
+
+    def test_cancelled_prompt_shows_still_open(self):
+        d = self.d
+        d.handle({"cmd": "return"})
+        d.close_window("0x2a00003")
+        d.close_window("0x4400002")
+        d.clock = 1010.0
+        d.tick()
+        self.assertEqual(d.sent, [], "prompt up: waiting")
+        d.close_window("0x3a0012a")   # Cancel: the prompt goes, the window stays
+        d.clock = 1010.25
+        d.tick()
+        still = d.events("still_open")
+        self.assertEqual(len(still), 1, "past 5 s with no prompt: Still open")
+        self.assertEqual(still[0]["apps"][0]["wid"], "0x3a00007")
+
+    def test_prompt_wait_has_a_limit(self):
+        d = self.d
+        d.handle({"cmd": "return"})
+        d.close_window("0x2a00003")
+        d.close_window("0x4400002")
+        d.clock = 1000.0 + bi.RETURN_PROMPT_WAIT_S + 0.25
+        d.tick()
+        self.assertEqual(len(d.events("still_open")), 1, "Still open after the limit")
 
     def test_nothing_open_shows_home_at_once(self):
         d = self.d
@@ -174,3 +221,22 @@ class _ListHandler(bi.logging.Handler):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestBoxWindows(unittest.TestCase):
+    """Windows captured on the box (21 Oct 2026), in fixtures/xprop-box/."""
+
+    def props(self, wid):
+        with open(os.path.join(HERE, "fixtures", "xprop-box", wid + ".txt")) as f:
+            return bi.parse_window(f.read())
+
+    def test_launcher_is_never_closed(self):
+        launcher = self.props("0x2e00007")
+        self.assertEqual(launcher["classes"], ["Godot_Engine", "Launcher"])
+        self.assertFalse(bi.closable("0x2e00007", launcher))
+        self.assertFalse(bi.is_app_window(launcher))
+
+    def test_desktop_skipped_apps_closed(self):
+        self.assertFalse(bi.closable("0x2a00003", self.props("0x2a00003")), "nemo-desktop")
+        for wid in ("0x3000007", "0x3400325", "0x4000006"):  # Nemo, Xed, terminal
+            self.assertTrue(bi.closable(wid, self.props(wid)), wid)

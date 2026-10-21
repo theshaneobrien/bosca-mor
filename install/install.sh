@@ -218,6 +218,18 @@ cinnamon() {
 		fi
 	fi
 
+	step "4. Cinnamon's minimise animation (Desktop hides the launcher at once, D71)"
+	if ! have gsettings || ! gsettings list-keys org.cinnamon 2>/dev/null | grep -qx desktop-effects-minimize; then
+		warn "no org.cinnamon desktop-effects-minimize here; turn the minimise effect off in Effects by hand"
+	else
+		local effect
+		effect="$(gsettings get org.cinnamon desktop-effects-minimize)"
+		if [ "$effect" = "'none'" ]; then ok "minimise effect is none"; else
+			todo "minimise effect $effect -> none"
+			run gsettings set org.cinnamon desktop-effects-minimize none
+		fi
+	fi
+
 	step "5. Cinnamon key bindings on Home, Back, Menu, Super+Home or Power"
 	if ! have gsettings; then warn "no gsettings: check the media keys by hand"; return; fi
 	local schema key value cleared found=0 schemas=0

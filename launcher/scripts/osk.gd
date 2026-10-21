@@ -16,7 +16,7 @@ const ROWS := [
 	[["q", 1], ["w", 1], ["e", 1], ["r", 1], ["t", 1], ["y", 1], ["u", 1], ["i", 1], ["o", 1], ["p", 1]],
 	[["a", 1], ["s", 1], ["d", 1], ["f", 1], ["g", 1], ["h", 1], ["j", 1], ["k", 1], ["l", 1], ["-", 1]],
 	[["z", 1], ["x", 1], ["c", 1], ["v", 1], ["b", 1], ["n", 1], ["m", 1], [".", 1], ["/", 1], [":", 1]],
-	[["_", 1], [".com", 3], ["Delete", 3], ["Done", 3]],
+	[["_", 1], ["Space", 3], [".com", 2], ["Delete", 2], ["Done", 2]],
 ]
 const MAX_LENGTH := 200
 
@@ -61,8 +61,8 @@ func handle(ev: InputEvent) -> bool:
 	if ev.is_action_pressed("text_delete", true):
 		_delete()
 		return true
-	if ev is InputEventKey and ev.pressed and ev.unicode > 32 and not ev.ctrl_pressed and not ev.alt_pressed:
-		_type(char(ev.unicode))
+	if ev is InputEventKey and ev.pressed and ev.unicode >= 32 and not ev.ctrl_pressed and not ev.alt_pressed:
+		_type(char(ev.unicode))   # the space bar types a space here, not OK (D35)
 		return true
 	if ev.is_action_pressed("nav_left", true):
 		col = maxi(col - 1, 0)
@@ -88,6 +88,7 @@ func handle(ev: InputEvent) -> bool:
 func press(key: String) -> void:
 	match key:
 		"Delete": _delete()
+		"Space": _type(" ")
 		"Done":
 			close()
 			done.emit(text)

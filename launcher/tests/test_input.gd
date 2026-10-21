@@ -323,3 +323,21 @@ func test_actions_match_every_device() -> void:
 	pad.button_index = JOY_BUTTON_A
 	pad.pressed = true
 	check(pad.is_action_pressed("accept"), "third pad's A is accept")
+
+
+# Box test: hovering a tile never selected it. The dwell timer fired a frame
+# early by the clock, resolve_dwell gave up, and nothing tried again.
+func test_early_dwell_timer_waits_out_the_rest() -> void:
+	await _setup()
+	_mouse_to(_centre(0) + Vector2(-60, 0), 1000)
+	_mouse_to(_centre(0), 1050)
+	_mouse_to(_centre(2), 1100)
+	im.fake_now_ms = 1210            # 110 ms: the timer fired early
+	home.resolve_dwell()
+	eq(home.focus, 0, "not yet")
+	check(not home._dwell_timer.is_stopped(), "re-armed for the remaining 10 ms")
+	check(absf(home._dwell_timer.time_left - 0.010) < 0.002, "for the rest only: %s" % home._dwell_timer.time_left)
+	im.fake_now_ms = 1220
+	home.resolve_dwell()
+	eq(home.focus, 2, "selected once the dwell is really over")
+	_teardown()

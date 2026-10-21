@@ -152,20 +152,11 @@ class TestKeys(DaemonCase):
         self.d.on_key("kbd", bi.KEY_HOME, 1)
         self.assertEqual(len(self.d.events("show")), 3)
 
-    def test_wmctrl_raises_if_launcher_stays_hidden(self):
-        self.d.clock = 100.0
+    def test_show_raises_the_launcher_at_once(self):
+        # It waits full screen behind apps (D69), so every show raises it.
         self.d.on_home()
-        self.d.clock = 100.6
-        self.d.tick()
+        self.assertEqual(self.d.events("show"), [{"evt": "show"}])
         self.assertEqual(self.d.ran, [["wmctrl", "-F", "-a", bi.LAUNCHER_TITLE]])
-
-    def test_no_raise_if_launcher_reports_visible(self):
-        self.d.clock = 100.0
-        self.d.on_home()
-        self.d.handle({"cmd": "state", "visible": True})
-        self.d.clock = 101.0
-        self.d.tick()
-        self.assertEqual(self.d.ran, [])
 
     def test_desktop_sends_notification(self):
         self.d.handle({"cmd": "desktop"})

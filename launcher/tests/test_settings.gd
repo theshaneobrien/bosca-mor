@@ -3,6 +3,7 @@ extends "res://tests/test_case.gd"
 const MainScene := preload("res://scenes/main.tscn")
 const Apps := preload("res://scripts/apps.gd")
 const State := preload("res://scripts/state.gd")
+const Paths := preload("res://scripts/paths.gd")
 const Motion := preload("res://scripts/motion.gd")
 const Prefs := preload("res://scripts/prefs.gd")
 const StateFile := preload("res://scripts/state_file.gd")
@@ -265,8 +266,10 @@ func test_add_from_desktop_entries() -> void:
 	eq(st._current().type, "add", "Add app")
 	_act("accept")
 	eq(st.level, "picker", "picker open")
-	var names: Array = st._items.map(func(i): return i.entry.name)
+	eq(st._items[0].type, "website", "A website comes first")
+	var names: Array = st._items.slice(1).map(func(i): return i.entry.name)
 	eq(names, ["Bar Game", "Kodi"], "shown apps only, sorted")
+	_act("nav_down")
 	_act("nav_down")
 	_act("accept")
 	eq(st.level, "content", "back to the list")
@@ -281,7 +284,7 @@ func test_add_from_desktop_entries() -> void:
 	_act("nav_right")
 	_act("nav_up")
 	_act("accept")
-	eq(st._items.map(func(i): return i.entry.name), ["Bar Game"], "Kodi not offered twice")
+	eq(st._items.slice(1).map(func(i): return i.entry.name), ["Bar Game"], "Kodi not offered twice")
 	_act("back")
 	eq(st.level, "content", "Back leaves the picker")
 	_teardown()
@@ -382,4 +385,124 @@ func test_about_shows_device() -> void:
 	eq(labels, ["Version", "Device name", "IP address", "Memory", "Session", "Last memory warning"], "rows")
 	eq(st._items[0].value, ProjectSettings.get_setting("application/config/version"), "version")
 	eq(st._items[5].value, "400 MB free while plex ran", "memory warning")
+	_teardown()
+
+
+func _type(text: String) -> void:
+	for ch in text:
+		_key(ch.unicode_at(0))
+
+
+# Box test: Add app listed every app on the system. Now it offers Flatpaks
+# only, and a website that opens full screen in the browser (D72).
+func test_picker_reads_only_the_flatpak_folders() -> void:
+	await _setup()
+	st.desktop_dirs = []
+	var dirs: Array = Paths.flatpak_desktop_dirs()
+	eq(dirs.size(), 2, "user and system Flatpak exports")
+	for d in dirs:
+		check(d.ends_with("flatpak/exports/share/applications"), "a Flatpak export: %s" % d)
+	_teardown()
+
+
+func test_flatpak_on_home_is_not_offered_again() -> void:
+	await _setup()
+	# A Flatpak whose id is already on Home, even with a different Exec line.
+	st.desktop_dirs = [dir]
+	var f := FileAccess.open(dir.path_join("tv.plex.PlexHTPC.desktop"), FileAccess.WRITE)
+	f.store_string("[Desktop Entry]\nType=Application\nName=Plex HTPC\nExec=/usr/bin/flatpak run --branch=stable --arch=x86_64 --command=Plex tv.plex.PlexHTPC\n")
+	f.close()
+	_act("nav_right")
+	_act("nav_up")
+	_act("accept")
+	eq(st._items.slice(1).map(func(i): return i.entry.name), [], "Plex is on Home already")
+	DirAccess.remove_absolute(dir.path_join("tv.plex.PlexHTPC.desktop"))
+	_teardown()
+
+
+func test_add_a_website() -> void:
+	await _setup()
+	st.profiles_dir = dir.path_join("profiles")
+	_act("nav_right")
+	_act("nav_up")
+	_act("accept")
+	_act("accept")                  # A website
+	var osk: Control = st.osk()
+	check(osk.visible, "name keyboard open")
+	_type("BBC iPlayer")
+	eq(osk.text, "BBC iPlayer", "the space bar types a space")
+	osk.press("Done")
+	check(osk.visible, "address keyboard open")
+	_type("bbc.co.uk/iplayer")
+	osk.press("Done")
+	check(not osk.visible, "done")
+	var site := _file_entry("bbc-iplayer")
+	eq(site.name, "BBC iPlayer", "name")
+	eq(site.url, "https://bbc.co.uk/iplayer", "address, https added")
+	eq(site.kind, "Web", "kind")
+	eq(site.description, "bbc.co.uk", "described by its host")
+	eq(site.url_editable, true, "start page editable")
+	var profile: String = dir.path_join("profiles").path_join("bbc-iplayer")
+	eq(site.argv, ["firefox", "--kiosk", "--new-instance", "--profile", profile, "{url}"], "Firefox kiosk, own profile")
+	check(FileAccess.file_exists(profile.path_join("user.js")), "profile seeded with user.js")
+	check(FileAccess.get_file_as_string(profile.path_join("user.js")).contains("media.eme.enabled"), "DRM on")
+	check("bbc-iplayer" in _home_ids(), "on Home")
+	_check_written("website")
+	DirAccess.remove_absolute(profile.path_join("user.js"))
+	DirAccess.remove_absolute(profile)
+	DirAccess.remove_absolute(dir.path_join("profiles"))
+	_teardown()
+
+
+func test_bundled_user_js_matches_the_installer() -> void:
+	var install := ProjectSettings.globalize_path("res://").path_join("../install/files/user.js")
+	if FileAccess.file_exists(install):
+		eq(FileAccess.get_file_as_string("res://data/user.js"), FileAccess.get_file_as_string(install), "launcher/data/user.js matches install/files")
+
+
+# Box test: added apps couldn't be removed. Right along an app row reaches
+# Remove, which asks first with Cancel focused (D73).
+func test_remove_an_app() -> void:
+	await _setup()
+	_act("nav_right")
+	_act("nav_down")                 # Plex
+	_act("nav_right")
+	eq(st.col, 1, "Remove, after the toggle (Plex has no start page)")
+	eq(st.hint_words(), ["Remove", "Back"], "hint")
+	_act("nav_right")
+	eq(st.col, 1, "Remove is the last stop")
+	_act("accept")
+	eq(main.state.screen, State.Screen.CONFIRM, "asks first")
+	eq(main.confirm.title(), "Remove Plex?", "names the app")
+	eq(main.state.confirm_focus, 0, "Cancel focused")
+	_act("back")
+	eq(main.state.screen, State.Screen.SETTINGS, "Back returns to Settings")
+	eq(st.level, "content", "where it was")
+	eq(st._current().app.id, "plex", "same row")
+	check("plex" in _file_ids(), "nothing removed")
+	_act("accept")
+	_act("nav_right")
+	_act("accept")
+	eq(main.state.screen, State.Screen.SETTINGS, "back in Settings")
+	check(not "plex" in _file_ids(), "Plex removed from apps.json")
+	check(not "plex" in _home_ids(), "and from Home")
+	_check_written("remove")
+	_teardown()
+
+
+func test_remove_on_a_row_with_a_start_page() -> void:
+	await _setup()
+	_act("nav_right")
+	for i in 5:
+		_act("nav_down")
+	eq(st._current().app.id, "browser", "Browser")
+	_act("nav_right")
+	eq(st.col, 1, "start page first")
+	_act("nav_right")
+	eq(st.col, 2, "then Remove")
+	_act("nav_left")
+	_act("nav_left")
+	eq(st.col, 0, "back to the row")
+	_act("nav_left")
+	eq(st.level, "nav", "then the section list")
 	_teardown()

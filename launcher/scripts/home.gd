@@ -252,9 +252,14 @@ func resolve_dwell() -> void:
 	var im := _input_mode()
 	if _hover < 0 or im == null or im.mode != InputModeScript.Mode.POINTER:
 		return
-	if im.now_ms() - _hover_since >= int(Tokens.HOVER_DWELL * 1000):
+	var left: int = int(Tokens.HOVER_DWELL * 1000) - (im.now_ms() - _hover_since)
+	if left <= 0:
 		set_focus(_hover)
 		_save_timer.start()
+	elif _dwell_timer.is_inside_tree():
+		# The timer can fire a frame before the clock agrees (it counts from
+		# the start of the frame the hover began in): wait out the rest.
+		_dwell_timer.start(left / 1000.0)
 
 
 func _input_mode() -> Node:

@@ -225,3 +225,19 @@ func test_timeout_while_waiting_returns_home() -> void:
 
 func test_fullscreen_by_default() -> void:
 	eq(ProjectSettings.get_setting("display/window/size/mode"), DisplayServer.WINDOW_MODE_FULLSCREEN, "full screen without --fullscreen")
+
+
+# Box test: minimising was plainly visible. For an app the launcher now stays
+# black and paused behind it and never minimises; only Desktop does (D69).
+func test_app_launch_never_minimises() -> void:
+	await _setup()
+	_act("accept")
+	_finish_tweens()
+	main.daemon.app_window.emit("youtube")
+	eq(main.minimize_requests, 0, "no minimise for an app")
+	check(main.is_hidden and tree.paused, "paused behind the app")
+	main.daemon.app_exited.emit("youtube", 0)
+	main.state.run_item("desktop")
+	_finish_tweens()
+	eq(main.minimize_requests, 1, "Desktop still minimises")
+	_teardown()

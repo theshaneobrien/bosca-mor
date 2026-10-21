@@ -11,6 +11,8 @@ signal closed
 signal apps_changed
 signal prefs_changed(prefs: Dictionary)
 signal launch_panel(app: Dictionary)
+## Remove was chosen on an app row; Main asks to confirm, then calls remove_app.
+signal remove_requested(app: Dictionary)
 
 const Tokens := preload("res://theme/tokens.gd")
 const Glyphs := preload("res://scripts/glyphs.gd")
@@ -31,7 +33,7 @@ const SECTIONS := [
 ]
 const HEADS := {
 	"apps": ["Apps on Home", "Shown left to right in this order."],
-	"picker": ["Add an app", "Apps installed on this device."],
+	"picker": ["Add an app", "Flatpak apps on this device, or a website."],
 	"display": ["Display", "How the launcher looks on the TV."],
 	"network": ["Network", "Wi-Fi and wired connections open in the desktop's own settings."],
 	"sound": ["Sound", "Speakers and volume open in the desktop's own settings."],
@@ -46,13 +48,18 @@ const PANELS := {
 const SCALE_NAMES := {1.0: "100%", 0.95: "95%", 0.9: "90%"}
 const GLYPH_NAMES := {"auto": "Automatic", "xbox": "Xbox", "playstation": "PlayStation"}
 const ACCENTS := [Tokens.CORAL, Tokens.YELLOW, Tokens.CYAN, Tokens.TEAL]
+## The kiosk profile prefs (DRM on, no prompts); matches install/files/user.js.
+const USER_JS := "res://data/user.js"
 
 ## Where apps.json is read from and written to. Empty: the user's file
 ## (read falls back to the bundled default until the first save).
 var apps_path := ""
 var state_path := ""
 var autostart_path := ""
+## Folders the Add app list reads; empty: the Flatpak exports (D72).
 var desktop_dirs: Array = []
+## Where website tiles get their Firefox profiles; empty: Paths.profiles_dir().
+var profiles_dir := ""
 var accepting_input := false
 ## The daemon's last memory warning, for About.
 var memory_note := ""
@@ -71,6 +78,8 @@ var _entries: Array = []    # picker: installed apps not yet on Home
 var _items: Array = []      # content items for the current level
 var _scroll := 0
 var _scale := 1.0
+var _osk_for := ""          # what the keyboard is typing: url, site_name or site_url
+var _site_name := ""
 
 var _hints: HBoxContainer
 var _nav: VBoxContainer
@@ -86,7 +95,7 @@ func _ready() -> void:
 	visible = false
 	_build()
 	_osk = OSK.new()
-	_osk.done.connect(_on_url_done)
+	_osk.done.connect(_on_osk_done)
 	_osk.cancelled.connect(_render)
 	add_child(_osk)
 	UI.ignore_mouse(self)
@@ -171,8 +180,8 @@ func _step(d: int) -> void:
 func _left() -> void:
 	if moving:
 		return
-	if col == 1:
-		col = 0
+	if col > 0:
+		col -= 1
 	elif level == "content":
 		level = "nav"
 
@@ -182,8 +191,13 @@ func _right() -> void:
 		return
 	if level == "nav":
 		_enter()
-	elif level == "content" and col == 0 and _current().get("type") == "app" and _current().app.url_editable:
-		col = 1
+	elif level == "content" and _current().get("type") == "app":
+		col = mini(col + 1, _remove_col(_current().app))
+
+
+## Right along an app row: the start page (if it has one), then Remove (D73).
+func _remove_col(app: Dictionary) -> int:
+	return 2 if app.url_editable else 1
 
 
 func _accept() -> void:
@@ -198,10 +212,17 @@ func _accept() -> void:
 		"add":
 			_open_picker()
 		"app":
-			if col == 1:
+			if col > 0 and col == _remove_col(it.app):
+				remove_requested.emit(it.app)
+			elif col == 1:
+				_osk_for = "url"
 				_osk.open("Browser start page", it.app.url)
 			else:
 				_toggle_hidden(it.app.id)
+		"website":
+			_site_name = ""
+			_osk_for = "site_name"
+			_osk.open("Website name", "")
 		"toggle", "choice":
 			_change(it.key)
 		"button":
@@ -224,7 +245,7 @@ func _move() -> bool:
 func _back() -> void:
 	if moving:
 		_drop()
-	elif col == 1:
+	elif col > 0:
 		col = 0
 	elif level == "picker":
 		level = "content"
@@ -321,24 +342,67 @@ func _drop() -> void:
 	item = _app_index(id) + 1
 
 
-func _on_url_done(text: String) -> void:
+func _on_osk_done(text: String) -> void:
+	var purpose := _osk_for
+	_osk_for = ""
+	match purpose:
+		"url":
+			var url := _normal_url(text)
+			if url:
+				_raw[_current().app.id]["url"] = url
+				_save_apps()
+				_build_items()
+		"site_name":
+			_site_name = text.strip_edges()
+			if _site_name:
+				_osk_for = "site_url"
+				_osk.open("Website address", "")
+		"site_url":
+			var url := _normal_url(text)
+			if url and _site_name:
+				_add_website(_site_name, url)
+	_render()
+
+
+static func _normal_url(text: String) -> String:
 	var url := text.strip_edges()
-	if url.is_empty():
-		_render()
-		return
-	if not url.contains("://"):
+	if url and not url.contains("://"):
 		url = "https://" + url
-	_raw[_current().app.id]["url"] = url
+	return url
+
+
+## Takes an app off Home (after Main's confirm). Its Firefox profile, if it
+## had one, stays on disk so a sign-in isn't lost.
+func remove_app(id: String) -> void:
+	var i := _app_index(id)
+	if i < 0:
+		return
+	_apps.remove_at(i)
+	_raw.erase(id)
 	_save_apps()
+	col = 0
 	_build_items()
+	item = clampi(item, 0, _items.size() - 1)
+	_render()
+
+
+## Back from the remove confirm: Settings as it was, not reset to the top.
+func resume() -> void:
+	visible = true
 	_render()
 
 
 func _open_picker() -> void:
+	# Flatpaks only (D72); an app already on Home, by its Flatpak id, isn't offered.
 	var have := {}
 	for a in _apps:
 		have[" ".join(a.argv)] = true
-	_entries = DesktopEntries.scan(desktop_dirs).filter(func(e): return not have.has(" ".join(e.argv)))
+		var fp := IconResolver.flatpak_id(a.argv)
+		if fp:
+			have[fp] = true
+	var dirs: Array = desktop_dirs if desktop_dirs else Paths.flatpak_desktop_dirs()
+	_entries = DesktopEntries.scan(dirs).filter(func(e):
+		return not have.has(" ".join(e.argv)) and not have.has(IconResolver.flatpak_id(e.argv)))
 	level = "picker"
 	item = 0
 	_scroll = 0
@@ -356,6 +420,30 @@ func _add_app(e: Dictionary) -> void:
 		"argv": e.argv,
 	}
 	_apps.append({"id": id})   # placeholder until the reload
+	_save_apps()
+	level = "content"
+	_build_items()
+	item = _items.size() - 1
+
+
+## A website tile: Firefox in kiosk mode with its own profile, like Netflix
+## and Prime Video, so it keeps its own sign-in (D72).
+func _add_website(site_name: String, url: String) -> void:
+	var accent: Color = ACCENTS[_apps.size() % ACCENTS.size()]
+	var id := DesktopEntries.id_for(site_name, _raw)
+	var profile := (profiles_dir if profiles_dir else Paths.profiles_dir()).path_join(id)
+	DirAccess.make_dir_recursive_absolute(profile)
+	if not FileAccess.file_exists(profile.path_join("user.js")):
+		Apps.write_atomic(profile.path_join("user.js"), FileAccess.get_file_as_string(USER_JS))
+	var host := url.get_slice("://", 1).get_slice("/", 0).trim_prefix("www.")
+	_raw[id] = {
+		"id": id, "name": site_name, "kind": "Web", "description": host,
+		"tint": "#" + Tokens.TILE_TINTS["#" + accent.to_html(false)].to_html(false),
+		"accent": "#" + accent.to_html(false),
+		"url": url, "url_editable": true,
+		"argv": ["firefox", "--kiosk", "--new-instance", "--profile", profile, "{url}"],
+	}
+	_apps.append({"id": id})
 	_save_apps()
 	level = "content"
 	_build_items()
@@ -383,6 +471,7 @@ func _change(key: String) -> void:
 func _build_items() -> void:
 	_items = []
 	if level == "picker":
+		_items.append({"type": "website", "label": "A website", "value": "Opens full screen in the browser"})
 		for e in _entries:
 			_items.append({"type": "entry", "entry": e})
 		return
@@ -577,9 +666,13 @@ func _hint_pairs() -> Array:
 		return [["accept", "Open"], ["back", "Back"]]
 	match _current().get("type", ""):
 		"app":
+			if col > 0 and col == _remove_col(_current().app):
+				return [["accept", "Remove"], ["back", "Back"]]
 			if col == 1:
 				return [["accept", "Edit"], ["back", "Back"]]
 			return [["accept", "Show or hide"], ["move", "Move"], ["back", "Back"]]
+		"website":
+			return [["accept", "Add"], ["back", "Back"]]
 		"add":
 			return [["accept", "Add app"], ["back", "Back"]]
 		"entry":
@@ -608,7 +701,7 @@ func _style_add(on: bool) -> void:
 func _row(it: Dictionary, on: bool) -> Control:
 	var p := PanelContainer.new()
 	p.custom_minimum_size.y = Tokens.ROW
-	var ring_on: bool = on and not (it.type == "app" and col == 1)
+	var ring_on: bool = on and not (it.type == "app" and col > 0)
 	var sb := UI.box(Tokens.ROW_FOCUS_BG if on else Color(Tokens.BG, 0.0), Tokens.ROW_RADIUS)
 	if ring_on:
 		sb.border_color = Tokens.TEAL if moving else Tokens.TEXT
@@ -652,6 +745,7 @@ func _row(it: Dictionary, on: bool) -> Control:
 				row.add_child(_url_button(app.url, on and col == 1))
 			row.add_child(_kind(app.kind))
 			row.add_child(_toggle(not app.hidden))
+			row.add_child(_small_button("Remove", on and col > 0 and col == _remove_col(app)))
 		"entry":
 			var e: Dictionary = it.entry
 			var n := UI.label(e.name, Tokens.sans(500, Tokens.ROW_FONT), Tokens.ROW_FONT, Tokens.TEXT)
@@ -667,7 +761,7 @@ func _row(it: Dictionary, on: bool) -> Control:
 			match it.type:
 				"toggle":
 					row.add_child(_toggle(it.on))
-				"choice", "info":
+				"choice", "info", "website":
 					var v := UI.label(it.value, Tokens.mono(400, Tokens.KIND_FONT), Tokens.KIND_FONT, Tokens.CORAL if it.get("warn", false) else Tokens.MUTED)
 					v.size_flags_vertical = SIZE_SHRINK_CENTER
 					row.add_child(v)
@@ -688,6 +782,24 @@ func _kind(kind: String) -> Label:
 	var k := UI.label(kind.to_upper(), Tokens.mono(400, Tokens.KIND_FONT, Tokens.TRACK_KIND), Tokens.KIND_FONT, Tokens.MUTED)
 	k.size_flags_vertical = SIZE_SHRINK_CENTER
 	return k
+
+
+## A small outlined button at the end of a row, filled when focused.
+func _small_button(word: String, on: bool) -> Control:
+	var b := PanelContainer.new()
+	b.custom_minimum_size.y = Tokens.URL_BUTTON
+	b.size_flags_vertical = SIZE_SHRINK_CENTER
+	var sb := UI.box(Tokens.TEXT if on else Color(Tokens.TEXT, 0.0), Tokens.URL_RADIUS)
+	if not on:
+		sb.border_color = Tokens.BUTTON_BORDER
+		sb.set_border_width_all(Tokens.BUTTON_BORDER_WIDTH)
+	sb.content_margin_left = Tokens.URL_PAD
+	sb.content_margin_right = Tokens.URL_PAD
+	b.add_theme_stylebox_override("panel", sb)
+	var l := UI.label(word, Tokens.sans(500, Tokens.URL_FONT), Tokens.URL_FONT, Tokens.BG if on else Tokens.STATUS)
+	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	b.add_child(l)
+	return b
 
 
 func _url_button(url: String, on: bool) -> Control:

@@ -110,6 +110,14 @@ static func desktop_dirs() -> Array[String]:
 	]
 
 
+## Just the Flatpak exports: what Settings > Apps > Add app offers (D72).
+static func flatpak_desktop_dirs() -> Array[String]:
+	return [
+		data_home().path_join("flatpak/exports/share/applications"),
+		"/var/lib/flatpak/exports/share/applications",
+	]
+
+
 static func flatpak_icon_dirs() -> Array:
 	return [
 		"/var/lib/flatpak/exports/share/icons/hicolor",

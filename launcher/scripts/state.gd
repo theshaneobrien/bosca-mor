@@ -41,6 +41,8 @@ signal confirm_focus_changed(i: int)
 signal still_focus_changed(i: int)
 ## Close anyway was confirmed: force-close the windows Still open listed.
 signal force_close_confirmed
+## Remove was confirmed for the app Settings asked about.
+signal remove_confirmed
 
 var screen := Screen.HOME
 var sidebar_focus := 0
@@ -166,13 +168,20 @@ func _confirm_run() -> void:
 	elif confirm_kind == "forceclose":
 		force_close_confirmed.emit()
 		go(Screen.HOME)
+	elif confirm_kind == "remove":
+		remove_confirmed.emit()
+		go(Screen.SETTINGS)
 	else:
 		go(Screen.OFF)
 
 
-# Cancel or Back: the force-close confirm returns to Still open.
+# Cancel or Back: the force-close confirm returns to Still open, the remove
+# confirm to Settings (D73), the power confirms to the sidebar.
 func _to_sidebar() -> void:
-	go(Screen.STILL_OPEN if confirm_kind == "forceclose" else Screen.SIDEBAR)
+	match confirm_kind:
+		"forceclose": go(Screen.STILL_OPEN)
+		"remove": go(Screen.SETTINGS)
+		_: go(Screen.SIDEBAR)
 
 
 func _still_left() -> void:

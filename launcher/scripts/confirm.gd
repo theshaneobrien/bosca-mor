@@ -11,6 +11,7 @@ const COPY := {
 	"poweroff": {"title": "Power off this device?", "body": "Anything playing will stop.", "verb": "Power off", "glyph": "power"},
 	"restart": {"title": "Restart this device?", "body": "The launcher opens again once it is back.", "verb": "Restart", "glyph": "restart"},
 	"forceclose": {"title": "Close %d apps?", "one": "Close 1 app?", "body": "Unsaved work will be lost.", "verb": "Close anyway", "glyph": "close"},
+	"remove": {"title": "Remove %s?", "body": "It comes off Home. You can add it again from Add app.", "verb": "Remove", "glyph": "close"},
 }
 
 var is_open := false
@@ -33,12 +34,15 @@ func _ready() -> void:
 	_scale = UI.display_scale(self)
 
 
-## count: how many apps a force-close would close.
-func open(k: String, animate: bool, count := 0) -> void:
+## count: how many apps a force-close would close. subject: the app to remove.
+func open(k: String, animate: bool, count := 0, subject := "") -> void:
 	kind = k
 	var copy: Dictionary = COPY[k]
 	_icon.texture = Glyphs.texture(copy.glyph, Tokens.CORAL, Tokens.DIALOG_ICON, Tokens.STATUS_STROKE, _scale)
-	_title.text = copy.one if count == 1 and copy.has("one") else (copy.title % count if copy.title.contains("%d") else copy.title)
+	if copy.title.contains("%s"):
+		_title.text = copy.title % subject
+	else:
+		_title.text = copy.one if count == 1 and copy.has("one") else (copy.title % count if copy.title.contains("%d") else copy.title)
 	_body.text = copy.body
 	_buttons[1].get_node("Label").text = copy.verb
 	set_focus(0)

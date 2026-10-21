@@ -1,0 +1,5 @@
+_NET_WM_WINDOW_TYPE(ATOM) = _NET_WM_WINDOW_TYPE_NORMAL
+WM_CLASS(STRING) = "xed", "Xed"
+_NET_WM_NAME(UTF8_STRING) = "notes.txt (files on server.local /files)"
+WM_NAME(STRING) = "notes.txt (files on server.local /files)"
+WM_TRANSIENT_FOR:  not found.
