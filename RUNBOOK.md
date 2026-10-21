@@ -54,6 +54,16 @@ install/install.sh
 
 Reboot after the installer. For a later release: `git pull`, run the same `curl` (it always fetches the latest release), and run `install/install.sh` again.
 
+## Boot splash (optional)
+
+Your own picture while the box starts and shuts down (D75). Copy the PNG to the box (it never goes in the repo), then:
+
+```bash
+tools/boot-splash.sh ~/.config/boscamor/splash.png
+```
+
+It rebuilds the boot image (a minute), then reboot. `tools/boot-splash.sh --restore` puts Mint's splash back.
+
 ## Pending on box (Chief)
 
 Hardware checks that sessions can't run. Tick them off after testing on the J4105.
@@ -80,6 +90,7 @@ What the first box report confirmed: Mint 22.3, X11, Python 3.12, 1920x1080 at 6
 - [ ] Launch an app: no minimise animation and no desktop in between; the keyboard works in the app at once, with no click needed (D69). Closing the app brings the launcher straight back.
 - [ ] Desktop hides the launcher with no animation (D71).
 - [ ] Return to the launcher with an unsaved editor: the save prompt stays in front until you answer it; the launcher comes back once the editor closes (D70).
+- [ ] If you install the boot splash: the picture shows centred on dark blue at start and at shut down. The Plymouth script couldn't be run on the dev machine, so if the screen stays plain dark blue or shows text, run `--restore` and tell the next session (D75).
 - [ ] Settings > Apps > Add app lists only Flatpaks, plus "A website"; add one website (name with a space, then its address) and open it; then remove it with Remove (D72, D73).
 
 - [ ] Run the installer and keep its output: `install/install.sh 2>&1 | tee ~/install.log`. If it stops, the log says where; the next box report includes it.

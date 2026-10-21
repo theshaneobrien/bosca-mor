@@ -88,6 +88,7 @@ report() {
 	section "Cinnamon power settings" sh -c 'gsettings list-recursively | grep -i -E "power|button"'
 	section "Cinnamon media keys" gsettings list-recursively org.cinnamon.desktop.keybindings.media-keys
 	section "Cinnamon bindings on Home, Back, Menu, Super" sh -c 'gsettings list-recursively | grep -i -E "homepage|back|menu|<super>home"'
+	section "Boot splash (tools/boot-splash.sh)" sh -c 'update-alternatives --query default.plymouth | sed -n "s/^Value: //p"; ls /usr/share/plymouth/themes; grep "^GRUB_CMDLINE_LINUX_DEFAULT" /etc/default/grub'
 	section "Cinnamon window effects (minimise animation)" sh -c 'gsettings list-recursively | grep -i -E "effect|animation"'
 	section "Installer log (install/install.sh 2>&1 | tee ~/install.log)" cat "$REAL_HOME/install.log"
 
