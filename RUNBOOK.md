@@ -69,6 +69,9 @@ Before it starts, open Firefox (one tab), LibreOffice Writer with unsaved text a
 
 **First box test, 21 Oct 2026 (v0.11.0).** The installer hadn't run (no `/opt/boscamor`, autostart, service, input group or logind drop-in), so the launcher ran windowed with no daemon. Fixed since: full screen by default, Settings from the sidebar, a toast when the daemon is missing, and a smoother hand-off to apps. To do on the box with the next release:
 
+What the first box report confirmed: Mint 22.3, X11, Python 3.12, 1920x1080 at 60 Hz on DP-2, wired network only (the Wi-Fi icon hides), `DISPLAY` in the systemd user environment, and Jellyfin's TV [Fullscreen] entry is exactly `--fullscreen --tv` (step 10's args). Installed icons exist for YouTube, Jellyfin, Moonlight and RetroArch (SVG) and Plex and Music Assistant (256 px PNG). Not in it: the G20S and any pad were not plugged in (only an 8BitDo keyboard receiver and a Logitech G305), so no remote keycodes yet; no key capture, budgets, launcher window class or save-prompt fixtures.
+
+- [ ] Plug in the G20S (and any pad) before the next `tools/box-report.sh --all`, after the installer and a reboot, so the key capture records the remote.
 - [ ] Run the installer and keep its output: `install/install.sh 2>&1 | tee ~/install.log`. If it stops, the log says where; the next box report includes it.
 - [ ] After the reboot the launcher opens full screen on its own, "Launcher" is in the menu, and `systemctl --user status boscamor-input` is active (started by the autostart entry, D67).
 - [ ] Launching an app: the screen goes black and the app appears with no desktop or minimise animation in between (D65). If the minimise still shows, the box report's "Cinnamon window effects" section has what's needed to turn it off.
@@ -108,7 +111,7 @@ Before it starts, open Firefox (one tab), LibreOffice Writer with unsaved text a
 - [ ] The Music Assistant Companion bundle installs from its latest GitHub release (step 9).
 - [ ] The installer found Cinnamon's `button-power` key and set it to `nothing`; pressing Power on the box (not the remote) does nothing on its own (step 9).
 - [ ] The "Return to the launcher" shortcut is on the desktop and in the menu, and runs on one click (step 9).
-- [ ] The Jellyfin tile opens straight into TV fullscreen. The box report's "Jellyfin desktop entries" section should show `Exec=... jellyfin-desktop --fullscreen --tv` under "TV [Fullscreen]"; if it differs, fix both `apps.default.json` copies (step 10).
+- [ ] The Jellyfin tile opens straight into TV fullscreen (step 10). The args are confirmed: the box's TV [Fullscreen] entry is `--fullscreen --tv`.
 - [ ] Check the mouse: hover dwell, click to launch, wheel one tile per notch, cursor hides after 3 s (step 2).
 - [ ] The exported `/opt/boscamor/boscamor` starts full screen on X11 after login and renders with the Compatibility renderer on the J4105's GPU (step 9 fix).
 - [ ] Focus Spotify on Home, wait 3 s, reboot: Home comes back with Spotify focused. Launch Plex, press Home, reboot: Plex focused (spec gaps, D61).
