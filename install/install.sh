@@ -129,8 +129,11 @@ packages() {
 	done
 	if [ "${#missing[@]}" -gt 0 ]; then
 		todo "apt install ${missing[*]}"
-		as_root apt-get update
-		as_root apt-get install -y "${missing[@]}"
+		# A broken third-party repository fails the update; the steps after
+		# this one (power key, auto-login, daemon) must still run.
+		as_root apt-get update \
+			|| warn "apt update failed (a third-party repository?); installing from the package lists already here"
+		as_root apt-get install -y "${missing[@]}" || warn "could not install ${missing[*]}"
 	fi
 }
 

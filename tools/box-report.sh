@@ -154,17 +154,43 @@ windows() {
 
 # Keys -------------------------------------------------------------------------------
 
+# True while an app opened from the launcher runs: a live child of the
+# daemon, other than the helpers it runs for a moment. A flatpak app counts
+# too: systemd moves it into its own scope, which stopping the service would
+# leave running and untracked, but its bwrap stays the daemon's child.
+app_open() {
+	local main
+	main="$(systemctl --user show -p MainPID --value boscamor-input.service 2>/dev/null)"
+	[ -n "$main" ] && [ "$main" != 0 ] || return 1
+	ps --ppid "$main" -o stat=,comm= 2>/dev/null \
+		| awk '$1 !~ /^Z/ && $2 !~ /^(wmctrl|xprop|xkill|notify-send)$/ { found = 1 } END { exit !found }'
+}
+
 keys() {
 	echo
-	local paused=""
+	local paused="" tries
 	# The daemon reads the same buttons, and nothing grabs them: Home or Guide
 	# would run Return to the launcher and close this terminal. Pause it for
 	# the capture only, since --budgets needs it running. Under sudo,
 	# systemctl --user would reach root's services, not the household user's.
 	if [ -z "${SUDO_USER:-}" ] && systemctl --user is-active --quiet boscamor-input.service 2>/dev/null; then
-		echo "Pausing the launcher's input service for the key capture; it starts again after."
-		systemctl --user stop boscamor-input.service && paused=1
-		trap 'systemctl --user start boscamor-input.service; exit 130' INT TERM HUP
+		# Stopping the service ends its apps without telling the launcher, so
+		# the TV stays black, and a flatpak app plays on untracked.
+		if app_open; then
+			echo "An app opened from the launcher is still open. Press Home on the remote to close it, then press Enter here."
+			read -r _ || true
+			# Home gives an app 3 s to close, then 3 s more after a kill.
+			tries=8
+			while [ "$tries" -gt 0 ] && app_open; do sleep 1; tries=$((tries - 1)); done
+		fi
+		if app_open; then
+			echo "The app is still open, so the input service keeps running: Home and Guide still work during the capture."
+			echo "For a clean capture, close the app and run tools/box-report.sh --keys again."
+		else
+			echo "Pausing the launcher's input service for the key capture; it starts again after."
+			systemctl --user stop boscamor-input.service && paused=1
+			trap 'systemctl --user start boscamor-input.service; exit 130' INT TERM HUP
+		fi
 	fi
 	echo "Key capture. Press each button when asked; press Enter on a keyboard to skip one."
 	python3 - "$OUT/keys.txt" <<'PY'

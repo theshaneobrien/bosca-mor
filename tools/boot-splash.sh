@@ -21,6 +21,8 @@ DIR="$THEMES/$THEME"
 LINK="$THEMES/default.plymouth"
 # The default before ours, as "<auto|manual> <theme file>", for --restore.
 SAVED="$DIR/previous-theme"
+# Mint's own theme, for --restore when nothing was saved.
+MINT="$THEMES/mint-logo/mint-logo.plymouth"
 GRUB="${BOSCAMOR_ROOT:-}/etc/default/grub"
 DRY=0
 RESTORE=0
@@ -83,6 +85,8 @@ if [ "$RESTORE" = 1 ]; then
 	echo "Restoring Mint's boot splash$([ "$DRY" = 1 ] && echo ' (dry run)')"
 	saved_mode="" saved=""
 	if [ -r "$SAVED" ]; then read -r saved_mode saved < "$SAVED" || true; fi
+	was_default=0
+	[ "$(current_theme)" = "$DIR/$THEME.plymouth" ] && was_default=1
 	if is_theme "$DIR/$THEME.plymouth"; then
 		say "remove  $THEME from the Plymouth themes"
 		CHANGED=1
@@ -100,6 +104,17 @@ if [ "$RESTORE" = 1 ]; then
 			run sudo update-alternatives --set default.plymouth "$saved"
 		else
 			say "warn    $saved, the default before, is gone; the highest priority theme is used"
+		fi
+	elif [ -z "$saved_mode" ] && [ "$was_default" = 1 ]; then
+		# Ours was the default but nothing says what came before: an older
+		# version of this script kept no record. Choose Mint's own theme, not
+		# whatever ranks highest (bgrt outranks it on Ubuntu bases).
+		if ! is_theme "$MINT"; then
+			say "warn    no Mint theme ($MINT); the highest priority theme is used"
+		elif [ "$(current_theme)" != "$MINT" ]; then
+			say "set     $MINT as the default"
+			CHANGED=1
+			run sudo update-alternatives --set default.plymouth "$MINT"
 		fi
 	fi
 	if [ -d "$DIR" ]; then
