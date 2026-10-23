@@ -59,12 +59,26 @@ run() {
 
 as_root() { run sudo "$@"; }
 
+# A file with the right content can still have the wrong mode, for example
+# 0777 after tools/deploy.sh copied it from a Windows drive.
+#   fix_mode <dest> <mode> [root]
+fix_mode() {
+	local dest="$1" mode="$2" root="${3:-}" have_mode
+	have_mode="$(stat -c %a "$dest")"
+	if [ "$have_mode" = "${mode#0}" ]; then
+		ok "$dest"
+		return
+	fi
+	todo "chmod $mode $dest (was $have_mode)"
+	if [ -n "$root" ]; then as_root chmod "$mode" "$dest"; else run chmod "$mode" "$dest"; fi
+}
+
 # Installs a file from text only if the destination differs.
 #   put_file <dest> <mode> <text> [root]
 put_file() {
 	local dest="$1" mode="$2" text="$3" root="${4:-}"
 	if [ -f "$dest" ] && [ "$(cat "$dest")" = "$text" ]; then
-		ok "$dest"
+		fix_mode "$dest" "$mode" "$root"
 		return
 	fi
 	todo "write $dest"
@@ -102,7 +116,10 @@ make_dir() {
 
 apt_installed() { dpkg-query -W -f='${Status}' "$1" 2>/dev/null | grep -q "install ok installed"; }
 
-# 1. Packages and apps ---------------------------------------------------------------
+# The launcher export is one ELF file; a failed download is an error page.
+is_elf() { [ "$(head -c 4 "$1" | od -An -tx1 | tr -d ' \n')" = 7f454c46 ]; }
+
+# 1. Packages ----------------------------------------------------------------------
 
 packages() {
 	step "1. Packages"
@@ -114,65 +131,6 @@ packages() {
 		todo "apt install ${missing[*]}"
 		as_root apt-get update
 		as_root apt-get install -y "${missing[@]}"
-	fi
-}
-
-# Flathub ids from the default config: "flatpak run <id>", minus the bundle.
-flathub_ids() {
-	python3 - "$FILES/apps.default.json" "$MA_ID" <<'PY'
-import json, sys
-for app in json.load(open(sys.argv[1])):
-    argv = app.get("argv", [])
-    if argv[:2] == ["flatpak", "run"]:
-        ids = [a for a in argv[2:] if not a.startswith("-")]
-        if ids and ids[0] != sys.argv[2]:
-            print(ids[0])
-PY
-}
-
-flatpak_has() { have flatpak && flatpak info "$1" >/dev/null 2>&1; }
-
-apps() {
-	step "1. Apps"
-	if [ "$APPS" = 0 ]; then ok "skipped (--no-apps)"; return; fi
-	if have flatpak && flatpak remotes --columns=name 2>/dev/null | grep -qx flathub; then
-		ok "Flathub remote"
-	else
-		todo "add the Flathub remote"
-		as_root flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
-	fi
-	local id
-	while read -r id; do
-		if flatpak_has "$id"; then ok "$id"; else
-			todo "flatpak install $id"
-			as_root flatpak install -y --noninteractive flathub "$id"
-		fi
-	done < <(flathub_ids)
-
-	if flatpak_has "$MA_ID"; then ok "$MA_ID (Music Assistant Companion)"; else
-		todo "install $MA_ID from the latest GitHub release bundle"
-		if [ "$DRY" = 0 ]; then
-			local url tmp
-			url="$(curl -fsSL "$MA_RELEASES" | python3 -c 'import json,sys; print(next((a["browser_download_url"] for a in json.load(sys.stdin)["assets"] if a["name"].endswith(".flatpak")), ""))')"
-			if [ -z "$url" ]; then
-				warn "no .flatpak asset in the latest Music Assistant release; install $MA_ID by hand"
-			else
-				tmp="$(mktemp --suffix=.flatpak)"
-				curl -fsSL -o "$tmp" "$url"
-				sudo flatpak install -y --noninteractive --bundle "$tmp"
-				rm -f "$tmp"
-			fi
-		fi
-	fi
-
-	if have spotify; then ok "spotify"; else
-		todo "install Spotify from its apt repository"
-		if [ "$DRY" = 0 ]; then
-			curl -fsSL "$SPOTIFY_KEY_URL" | sudo gpg --dearmor --yes -o /etc/apt/trusted.gpg.d/spotify.gpg
-			echo "deb https://repository.spotify.com stable non-free" | sudo tee /etc/apt/sources.list.d/spotify.list >/dev/null
-			sudo apt-get update
-			sudo apt-get install -y spotify-client
-		fi
 	fi
 }
 
@@ -284,12 +242,43 @@ lightdm() {
 	fi
 	put_file "$SYS/etc/lightdm/lightdm.conf.d/90-boscamor.conf" 0644 \
 		"$(sed "s/@USER@/$USER_NAME/" "$FILES/lightdm-boscamor.conf")" root
+	lightdm_overrides
 	if have getent && getent group autologin >/dev/null; then
 		if id -nG "$USER_NAME" | tr ' ' '\n' | grep -qx autologin; then ok "$USER_NAME is in autologin"; else
 			todo "add $USER_NAME to autologin"
 			as_root usermod -aG autologin "$USER_NAME"
 		fi
 	fi
+}
+
+# LightDM reads lightdm.conf after lightdm.conf.d, so a key set there wins
+# over 90-boscamor.conf. Mint's Login Window tool writes autologin-user there.
+lightdm_overrides() {
+	local conf="$SYS/etc/lightdm/lightdm.conf" found line
+	[ -f "$conf" ] || return 0
+	found="$(python3 - "$conf" "$USER_NAME" <<'PY'
+import sys
+want = {"autologin-user": sys.argv[2], "autologin-session": "cinnamon", "user-session": "cinnamon"}
+section = ""
+for raw in open(sys.argv[1], errors="replace"):
+    line = raw.strip()
+    if not line or line[0] in "#;":
+        continue
+    if line.startswith("["):
+        section = line.strip("[]").strip()
+        continue
+    if section not in ("Seat:*", "Seat:seat0", "SeatDefaults"):
+        continue
+    key, eq, value = line.partition("=")
+    key, value = key.strip(), value.strip()
+    if eq and key in want and value != want[key]:
+        print("%s=%s, not %s" % (key, value, want[key]))
+PY
+)" || return 0
+	while IFS= read -r line; do
+		[ -n "$line" ] || continue
+		warn "$conf sets $line, and it wins over 90-boscamor.conf: remove that line or fix its value"
+	done <<< "$found"
 }
 
 # 7. The launcher's own files ------------------------------------------------------------
@@ -307,7 +296,11 @@ files() {
 	local daemon_before=$CHANGES
 	put_file "$DEST/boscamor-input.py" 0755 "$(cat "$ROOT/daemon/boscamor-input.py")"
 	if [ -f "$ROOT/build/boscamor" ]; then
-		if [ -f "$DEST/boscamor" ] && cmp -s "$ROOT/build/boscamor" "$DEST/boscamor"; then ok "$DEST/boscamor"; else
+		if ! is_elf "$ROOT/build/boscamor"; then
+			warn "$ROOT/build/boscamor is not a Linux build (a failed download?), so it was not installed; download it again with curl -fL"
+		elif [ -f "$DEST/boscamor" ] && cmp -s "$ROOT/build/boscamor" "$DEST/boscamor"; then
+			fix_mode "$DEST/boscamor" 0755
+		else
 			todo "copy the launcher export to $DEST/boscamor"
 			run install -m 0755 "$ROOT/build/boscamor" "$DEST/boscamor"
 		fi
@@ -377,6 +370,110 @@ for app in json.load(open(sys.argv[1])):
 PY
 }
 
+# 8. Apps --------------------------------------------------------------------------------
+# Last, and each step warns and moves on when it fails: a download or a third-party
+# repository that is down must never stop the power key, auto-login and daemon steps.
+
+# Flathub ids from the default config: "flatpak run <id>", minus the bundle.
+flathub_ids() {
+	python3 - "$FILES/apps.default.json" "$MA_ID" <<'PY'
+import json, sys
+for app in json.load(open(sys.argv[1])):
+    argv = app.get("argv", [])
+    if argv[:2] == ["flatpak", "run"]:
+        ids = [a for a in argv[2:] if not a.startswith("-")]
+        if ids and ids[0] != sys.argv[2]:
+            print(ids[0])
+PY
+}
+
+flatpak_has() { have flatpak && flatpak info "$1" >/dev/null 2>&1; }
+
+apps() {
+	step "8. Apps"
+	if [ "$APPS" = 0 ]; then ok "skipped (--no-apps)"; return; fi
+	if have flatpak && flatpak remotes --columns=name 2>/dev/null | grep -qx flathub; then
+		ok "Flathub remote"
+	else
+		todo "add the Flathub remote"
+		as_root flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo \
+			|| warn "could not add the Flathub remote"
+	fi
+	local id
+	while read -r id; do
+		if flatpak_has "$id"; then ok "$id"; else
+			todo "flatpak install $id"
+			as_root flatpak install -y --noninteractive flathub "$id" || warn "could not install $id from Flathub"
+		fi
+	done < <(flathub_ids)
+	music_assistant
+	spotify_app
+}
+
+music_assistant() {
+	if flatpak_has "$MA_ID"; then ok "$MA_ID (Music Assistant Companion)"; return; fi
+	todo "install $MA_ID from the latest GitHub release bundle"
+	[ "$DRY" = 1 ] && return
+	local url="" tmp
+	if ! url="$(curl -fsSL "$MA_RELEASES" | python3 -c 'import json,sys; print(next((a["browser_download_url"] for a in json.load(sys.stdin).get("assets", []) if a["name"].endswith(".flatpak")), ""))' 2>/dev/null)"; then
+		warn "could not read the latest Music Assistant release; install $MA_ID by hand"
+	elif [ -z "$url" ]; then
+		warn "no .flatpak asset in the latest Music Assistant release; install $MA_ID by hand"
+	else
+		tmp="$(mktemp --suffix=.flatpak)"
+		if ! { curl -fsSL -o "$tmp" "$url" && sudo flatpak install -y --noninteractive --bundle "$tmp"; }; then
+			warn "could not install $MA_ID from $url"
+		fi
+		rm -f "$tmp"
+	fi
+}
+
+# Spotify's key signs only Spotify's repository (signed-by), not every
+# repository as a key in trusted.gpg.d would. The files take the $SYS prefix
+# like every other system path (D53); the signed-by path is the one apt reads.
+SPOTIFY_KEYRING=/etc/apt/keyrings/spotify.gpg
+SPOTIFY_OLD_KEY=/etc/apt/trusted.gpg.d/spotify.gpg
+SPOTIFY_LIST=/etc/apt/sources.list.d/spotify.list
+SPOTIFY_SOURCE="deb [signed-by=$SPOTIFY_KEYRING] https://repository.spotify.com stable non-free"
+
+spotify_app() {
+	if [ -f "$SYS$SPOTIFY_OLD_KEY" ]; then
+		# An earlier installer put the key in trusted.gpg.d. Keyring first, then
+		# the source that names it, then the old key, so apt always has a key.
+		todo "trust Spotify's key for Spotify's repository only ($SPOTIFY_KEYRING)"
+		as_root install -D -m 0644 "$SYS$SPOTIFY_OLD_KEY" "$SYS$SPOTIFY_KEYRING"
+		put_file "$SYS$SPOTIFY_LIST" 0644 "$SPOTIFY_SOURCE" root
+		as_root rm -f "$SYS$SPOTIFY_OLD_KEY"
+	fi
+	if have spotify; then ok "spotify"; return; fi
+	todo "install Spotify from its apt repository"
+	[ "$DRY" = 1 ] && return
+	if [ ! -f "$SYS$SPOTIFY_KEYRING" ] && ! spotify_key; then
+		warn "could not fetch Spotify's key from $SPOTIFY_KEY_URL; install Spotify by hand"
+		return
+	fi
+	put_file "$SYS$SPOTIFY_LIST" 0644 "$SPOTIFY_SOURCE" root
+	if ! sudo apt-get update; then
+		# Left in place, a rejected source makes every later apt update fail.
+		sudo rm -f "$SYS$SPOTIFY_LIST" "$SYS$SPOTIFY_KEYRING"
+		warn "apt update failed with Spotify's repository added, so it was taken out again; if apt rejected Spotify's key, update SPOTIFY_KEY_URL from Spotify's Linux download page"
+	elif ! sudo apt-get install -y spotify-client; then
+		warn "could not install spotify-client"
+	fi
+}
+
+# Fetches Spotify's key, dearmors it as the household user, then installs it.
+spotify_key() {
+	local asc bin rc=0
+	asc="$(mktemp)"
+	bin="$(mktemp)"
+	curl -fsSL -o "$asc" "$SPOTIFY_KEY_URL" \
+		&& gpg --batch --yes --dearmor -o "$bin" "$asc" \
+		&& sudo install -D -m 0644 "$bin" "$SYS$SPOTIFY_KEYRING" || rc=1
+	rm -f "$asc" "$bin"
+	return "$rc"
+}
+
 # ----------------------------------------------------------------------------------------
 
 main() {
@@ -387,12 +484,12 @@ main() {
 	have python3 || { echo "python3 is needed (it ships with Mint)." >&2; exit 1; }
 	echo "Installing the launcher for $USER_NAME$([ "$DRY" = 1 ] && echo ' (dry run: nothing changes)')"
 	packages
-	apps
 	input_group
 	logind
 	cinnamon
 	lightdm
 	files
+	apps
 	echo
 	for w in "${WARNINGS[@]}"; do echo "warning: $w"; done
 	if [ "$CHANGES" = 0 ]; then

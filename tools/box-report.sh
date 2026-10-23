@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
 # Collects what the dev sessions can't see from the box, into one folder and
 # one .tar.gz to copy back to the dev machine. Read-only apart from writing
-# the report; it never uses sudo itself.
+# the report and pausing the launcher's input service during --keys; it never
+# uses sudo itself.
 #
 #   tools/box-report.sh             system, input devices, desktop settings,
 #                                   apps, icons, open windows (as test fixtures)
 #   tools/box-report.sh --keys      press each remote and pad button when asked
 #                                   (needs the input group, or run with sudo)
 #   tools/box-report.sh --budgets   CPU and memory of the launcher and daemon,
-#                                   60 s on Home and 60 s with an app in front
+#                                   60 s on Home and 60 s with an app in front;
+#                                   easiest over ssh, so the TV keeps the focus
 #   tools/box-report.sh --all       all three, one after another
 #
 # Before the default run, open Firefox (one tab), LibreOffice Writer with some
@@ -154,9 +156,19 @@ windows() {
 
 keys() {
 	echo
+	local paused=""
+	# The daemon reads the same buttons, and nothing grabs them: Home or Guide
+	# would run Return to the launcher and close this terminal. Pause it for
+	# the capture only, since --budgets needs it running. Under sudo,
+	# systemctl --user would reach root's services, not the household user's.
+	if [ -z "${SUDO_USER:-}" ] && systemctl --user is-active --quiet boscamor-input.service 2>/dev/null; then
+		echo "Pausing the launcher's input service for the key capture; it starts again after."
+		systemctl --user stop boscamor-input.service && paused=1
+		trap 'systemctl --user start boscamor-input.service; exit 130' INT TERM HUP
+	fi
 	echo "Key capture. Press each button when asked; press Enter on a keyboard to skip one."
 	python3 - "$OUT/keys.txt" <<'PY'
-import glob, os, select, struct, sys, time
+import glob, os, select, struct, sys, termios, time
 
 EVENT = struct.Struct("llHHi")
 NAMES = {1: "KEY_ESC", 14: "KEY_BACKSPACE", 28: "KEY_ENTER", 57: "KEY_SPACE", 102: "KEY_HOME",
@@ -211,11 +223,20 @@ def drain(secs):
 
 # The program came in on stdin (this heredoc), so the keyboard is /dev/tty.
 tty = open("/dev/tty")
+ENTER = (28, 96)        # KEY_ENTER, KEY_KPENTER
+
+def flush_tty():
+    # Drops a typed line nobody read, so one Enter never answers two prompts.
+    try:
+        termios.tcflush(tty.fileno(), termios.TCIFLUSH)
+    except termios.error:
+        pass
 
 out = open(sys.argv[1], "w")
 out.write("prompt | device | code | name | scancode\n")
 for prompt in PROMPTS:
     drain(0.3)
+    flush_tty()
     print("\n  " + prompt + " ... ", end="", flush=True)
     end = time.time() + 20
     got = None
@@ -244,6 +265,13 @@ for prompt in PROMPTS:
                 elif t == 0 and c == 0 and pending is not None:
                     scan_only.append("0x%x from %s" % (pending, names.get(fds[fd], fds[fd])))
                     pending = None
+    if got and got[1] in ENTER and not prompt.startswith("Remote: OK"):
+        # A keyboard's Enter reaches /dev/input before the terminal: when its
+        # line follows, it was the skip, not the button.
+        r, _, _ = select.select([tty], [], [], 0.3)
+        if r:
+            got = None
+    flush_tty()
     if got:
         dev, code = got
         line = "%s | %s | %d | %s | %s" % (prompt.split(".")[0], names.get(dev, dev), code,
@@ -263,6 +291,7 @@ for prompt in PROMPTS:
 for prompt in ["Hold the remote still in your hand, as if watching TV, for 5 s",
                "Press the D-pad a few times, the way you would to move along the tiles, for 5 s"]:
     print("\n  " + prompt + ". Press Enter on a keyboard to start.", end=" ", flush=True)
+    flush_tty()
     tty.readline()
     drain(0.2)
     dx = dy = 0
@@ -285,32 +314,61 @@ for prompt in ["Hold the remote still in your hand, as if watching TV, for 5 s",
     line = "air mouse | %s | net dx %d dy %d | furthest %d px" % (prompt.split(",")[0], dx, dy, peak)
     print("  " + line)
     out.write(line + "\n")
+flush_tty()     # an Enter pressed while measuring must not answer --budgets
 print("\nWritten to " + sys.argv[1])
 PY
+	if [ -n "$paused" ]; then
+		trap - INT TERM HUP
+		systemctl --user start boscamor-input.service
+	fi
 	[ -n "${SUDO_USER:-}" ] && chown -R "$SUDO_USER" "$OUT"
 }
 
 # Budgets ------------------------------------------------------------------------------
 
-# CPU ticks (1/100 s) and voluntary wakeups per thread of one process over 10 s.
+# utime + stime of one thread. The name in (brackets) can hold spaces
+# ("WorkerThread 0"), so the fields are counted from after its last ") ".
+ticks() { awk '{ sub(/^.*\) /, ""); print $12 + $13 }' "$1/stat"; }
+
+# CPU ticks (1/100 s) and voluntary wakeups per thread of one process over
+# 10 s, and where each one waits (wchan; the syscall number would need root).
 threads() {
 	local pid="$1" t id c w
 	declare -A c0 w0
 	for t in /proc/"$pid"/task/*; do
 		id="${t##*/}"
-		c0[$id]=$(awk '{print $14 + $15}' "$t/stat")
+		c0[$id]=$(ticks "$t")
 		w0[$id]=$(awk '/^voluntary_ctxt_switches/{print $2}' "$t/status")
 	done
 	sleep 10
 	for t in /proc/"$pid"/task/*; do
 		id="${t##*/}"
 		[ -n "${c0[$id]:-}" ] || continue
-		c=$(( $(awk '{print $14 + $15}' "$t/stat") - c0[$id] ))
+		c=$(( $(ticks "$t") - c0[$id] ))
 		w=$(( ($(awk '/^voluntary_ctxt_switches/{print $2}' "$t/status") - w0[$id]) / 10 ))
 		[ "$c" -gt 0 ] || [ "$w" -gt 20 ] || continue
-		printf "%-8s %-18s %5s ticks %6s/s  %s syscall %s\n" "$id" "$(cat "$t/comm")" "$c" "$w" \
-			"$(cat "$t/wchan" 2>/dev/null)" "$(cut -d" " -f1 "$t/syscall" 2>/dev/null)"
+		printf "%-8s %-18s %5s ticks %6s/s  %s\n" "$id" "$(cat "$t/comm")" "$c" "$w" \
+			"$(cat "$t/wchan" 2>/dev/null)"
 	done
+}
+
+# Gives time to set up the TV after the Enter.
+countdown() {
+	echo "  Measuring starts in $1 s."
+	sleep "$1"
+}
+
+# What the TV shows as a sample starts, so one taken with the wrong thing in
+# front shows up in budgets.txt.
+front() {
+	local d="${DISPLAY:-:0}" active lw state
+	if ! have xprop; then echo "in front: (no xprop)"; return; fi
+	active="$(DISPLAY=$d xprop -root _NET_ACTIVE_WINDOW 2>/dev/null | awk '{print $NF}')"
+	echo "in front: $(DISPLAY=$d xprop -id "$active" WM_CLASS _NET_WM_NAME 2>/dev/null | cut -d= -f2- | tr '\n' ' ')"
+	lw="$(DISPLAY=$d wmctrl -l 2>/dev/null | awk '{t=$4; for (i=5; i<=NF; i++) t=t" "$i} t=="Launcher" {print $1; exit}')"
+	if [ -z "$lw" ]; then echo "launcher window: none"; return; fi
+	if DISPLAY=$d xprop -id "$lw" _NET_WM_STATE 2>/dev/null | grep -q _NET_WM_STATE_HIDDEN; then state=minimised; else state=shown; fi
+	echo "launcher window: $lw, $state"
 }
 
 budgets() {
@@ -323,14 +381,23 @@ budgets() {
 		echo "Need pidstat and both processes. launcher pid: ${launcher:-none}, daemon pid: ${daemon:-none}" | tee "$file"
 		return
 	fi
-	read -r -p "  Leave the launcher on Home, hands off the remote. Press Enter to measure 60 s. " _
+	# Enter goes to this terminal, but the TV must show the launcher or the app
+	# while measuring, and an Enter on the launcher would open a tile. So each
+	# step starts with Enter here, then a countdown to get the screen right.
+	echo "  Each step starts when you press Enter here, then gives you time to set up the TV."
+	echo "  On the box itself, come back to this terminal (Alt+Tab) for each next step."
+	read -r -p "  1 of 3. Press Enter, then bring the launcher up on Home. On the box itself click it in the panel or use Alt+Tab (on the desktop the remote's Home closes this terminal). Hands off for 75 s. " _
+	countdown 15
 	{
 		echo "===== Home, idle, shown"
+		front
 		pidstat -u -r -p "$launcher,$daemon" 5 12
 	} | tee -a "$file"
-	read -r -p "  Now open an app from Home (YouTube is fine) and wait until it shows. Press Enter to measure 60 s. " _
+	read -r -p "  2 of 3. Press Enter, then open an app from Home (YouTube is fine) and leave it. Hands off for 100 s. " _
+	countdown 30
 	{
 		echo "===== Hidden behind an app"
+		front
 		pidstat -u -r -p "$launcher,$daemon" 5 12
 		echo "===== RSS (kB)"
 		ps -o pid,rss,comm -p "$launcher,$daemon"
@@ -339,9 +406,11 @@ budgets() {
 		echo "===== Launcher threads, 10 s (behind the app): CPU ticks, wakeups a second, where it waits"
 		threads "$launcher"
 	} | tee -a "$file"
-	read -r -p "  Press Home to come back to the launcher, leave it idle, then press Enter. " _
+	read -r -p "  3 of 3. Press Enter, then press Home on the remote to close the app, and leave the launcher on Home. Hands off for 25 s. " _
+	countdown 15
 	{
 		echo "===== Launcher threads, 10 s (Home, idle)"
+		front
 		threads "$launcher"
 	} | tee -a "$file"
 	echo "  For the GPU, run this yourself while Home is idle and keep its output:"

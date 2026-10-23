@@ -1,8 +1,10 @@
+# On the desktop the launcher is only minimised, so this raises it (Home
+# comes back) and starts a new one only when none is running.
 [Desktop Entry]
 Type=Application
 Name=Launcher
 Comment=Open the TV launcher
-Exec=/opt/boscamor/boscamor
+Exec=sh -c "wmctrl -F -a Launcher || exec /opt/boscamor/boscamor"
 Icon=video-display
 Terminal=false
 Categories=AudioVideo;
