@@ -539,7 +539,7 @@ func test_a_click_before_the_pointer_moves_never_powers_off() -> void:
 	# shown is what a click on a button presses until the pointer moves.
 	main.state.ask("poweroff")
 	_move(action + Vector2(1, 0))
-	check(im.cursor_visible, "the cursor shows: the next click is at the pointer")
+	eq(main.state.confirm_focus, 0, "jitter does not start pointing: Cancel stays focused")
 	_click(action)
 	eq(main.state.screen, S.SIDEBAR, "Cancel again, not Power off")
 	eq(main.daemon.calls, [], "still no power call")

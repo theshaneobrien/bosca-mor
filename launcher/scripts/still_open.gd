@@ -30,6 +30,7 @@ func _ready() -> void:
 
 func open(list: Array) -> void:
 	apps = list
+	_scale = UI.display_scale(self)   # the TV mode may have changed since start
 	_title.text = "1 app is still open" if apps.size() == 1 else "%d apps are still open" % apps.size()
 	for c in _list.get_children():
 		_list.remove_child(c)

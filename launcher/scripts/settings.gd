@@ -75,6 +75,8 @@ var user_js := USER_JS
 var accepting_input := false
 ## The daemon's last memory warning, for About.
 var memory_note := ""
+## Tests: the display scale to draw at; 0 reads it from the window.
+var fixed_scale := 0.0
 ## SystemSetup, for what the TV and sound are doing now. Null: rows hidden.
 var setup: Node = null
 
@@ -121,6 +123,8 @@ func _ready() -> void:
 
 func open() -> void:
 	_load_apps()
+	# The TV mode may have changed since start. Tests fix it (headless is tiny).
+	_scale = fixed_scale if fixed_scale > 0.0 else UI.display_scale(self)
 	_row_icons.clear()          # a drop-in swapped since last time shows now
 	prefs = Prefs.load_prefs(state_path)
 	section = 0

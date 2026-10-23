@@ -403,16 +403,18 @@ class Daemon:
 
     def run_wait(self, argv):
         """Runs a helper binary and waits up to POWER_WAIT_S for its exit
-        status. Never through a shell. Still running then counts as 0, and
-        None means it could not start."""
+        status. Never through a shell. Still running then counts as 0 and is
+        left running (subprocess.run's timeout would kill it, and with it the
+        power-off), and None means it could not start."""
         try:
-            return subprocess.run(argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                                  timeout=POWER_WAIT_S).returncode
-        except subprocess.TimeoutExpired:
-            return 0
+            proc = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
         except OSError as e:
             log.warning("could not run %s: %s", argv[0], e)
             return None
+        try:
+            return proc.wait(timeout=POWER_WAIT_S)
+        except subprocess.TimeoutExpired:
+            return 0
 
     def signal_group(self, pgid, sig):
         os.killpg(pgid, sig)
@@ -686,6 +688,10 @@ class Daemon:
             return
         app = self.app
         if app and app.closing:
+            # Already ending (the launch timeout, or an earlier Home): this
+            # press still asks for Home, and Return when on the desktop.
+            app.show_after = True
+            app.return_after = app.return_after or self.desktop
             return
         if app and not app.keep_on_home:
             # On the desktop, Return runs once the app has gone (_finish).

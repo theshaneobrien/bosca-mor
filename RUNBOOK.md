@@ -19,6 +19,7 @@
 | Fix: first box test | done | Full screen by default; Settings from the sidebar closes it; no daemon on Linux shows a toast; launch waits black for the app window, Desktop fades first (D65 to D68); installer starts the daemon from autostart and adds a menu entry. 121 launcher tests, 59 daemon tests |
 | Fix: second box test | done | No splash; hover selects tiles; the launcher stays black behind apps and the daemon hands them the focus (D69); Return waits for save prompts (D70); minimise effect off (D71); Add app is Flatpaks and websites (D72); Remove (D73). 129 launcher tests, 65 daemon tests |
 | Loading screen | done | "Opening <name>" with the tile and pulsing dots on the black while an app starts, from 0.5 s, at up to 30 fps (D76). 132 launcher tests |
+| Full review | done | Nine reviewers, three skeptics per finding: 60 of 72 findings confirmed and fixed, plus 9 smaller ones, then two rounds of reviewers on the fixes (D85 to D98). The worst: xrandr, pactl and nmcli went through a shell (Wi-Fi names could run commands), a broken apps.json plus a save wiped the app list, website tiles got an empty kiosk profile, a failed app download aborted the installer, Power over an app left it playing unseen. 223 launcher tests, 141 daemon tests. Release v0.13.0 |
 | Fix: boot picture and idle CPU | done | The boot picture is set to the exact CEA 1080p60 timing by id from `xrandr --verbose`, and every login check is logged (D83); no audio driver and a 60 Hz idle loop (D84); box-report key capture fixed (it read stdin, which was the program), plus the launcher's log, `xrandr --verbose`, kernel display messages and CPU per thread. 160 launcher tests, 70 daemon tests. Release v0.12.1 |
 | Fix: third box test | done | App windows wait 2 s more behind the black (D77); the daemon focuses the launcher at login (D78); picture set to 1080p60 with xrandr and a Picture choice with keep or undo (D79); HDMI sound and start volume with pactl (D80); Wi-Fi list and join with nmcli (D81); OK keys X can't see passed on as Accept (D82). 157 launcher tests, 70 daemon tests. Release v0.12.0 |
 
@@ -96,6 +97,18 @@ What the first box report confirmed: Mint 22.3, X11, Python 3.12, 1920x1080 at 6
 - [ ] Open a slow app (Jellyfin, Spotify, RetroArch): after the fade the loading screen shows its tile, "Opening <name>" and pulsing dots, until the app appears. Plex may open before it shows at all (D76).
 - [ ] If you install the boot splash: the picture shows centred on dark blue at start and at shut down. The Plymouth script couldn't be run on the dev machine, so if the screen stays plain dark blue or shows text, run `--restore` and tell the next session (D75).
 - [ ] Settings > Apps > Add app lists only Flatpaks, plus "A website"; add one website (name with a space, then its address) and open it; then remove it with Remove (D72, D73).
+
+**Full review, 23 Oct 2026 (v0.13.0).** To check on the box:
+
+- [ ] Power with the cursor resting where Power off appears, then OK with the air mouse on: Cancel runs (D92).
+- [ ] With the air mouse on, the D-pad plus OK in Settings (Display > Reduce motion) and on the Wi-Fi keyboard: the highlighted row or key acts, not what the hidden pointer is over (D92).
+- [ ] Power while an app plays: the app ends and the confirm shows; Cancel, then Home works as usual (D85).
+- [ ] After keys have scrolled Home, rest the pointer on the cut-off tile at the left edge: focus does not move (D93).
+- [ ] Join a Wi-Fi network whose password has a capital and a symbol, using Shift and the "!#?" page; the password shows as dots (D96). If a USB keyboard is handy, also try a password with $ and a double quote (D87).
+- [ ] With the TV on the Wyse's other DP or HDMI socket, sound plays through the TV (D88).
+- [ ] With `BOSCAMOR_DRY_RUN=1` for the daemon, Power off goes to "Shutting down" and back to Home (D89).
+- [ ] `tools/box-report.sh --keys` with no app open: the daemon pauses and starts again. Then with YouTube open: it asks you to press Home first (D98).
+- [ ] The Launcher menu entry with the launcher running brings it to the front instead of starting a second one (D98).
 
 **Third box report, 23 Oct 2026 (v0.12.0).** At boot the TV flickered at a wrong-looking mode until the cable was replugged. The report was taken after the replug, so it shows the good state only: DP-1 at 1920x1080, the second of two 60.00 Hz timings. The launcher used 25% of a core idle on Home and 15% behind an app (budgets 1% and 0.5%). The key capture skipped every button by itself (fixed). HDMI sound was right: `output:hdmi-stereo+input:analog-stereo` on Built-in Audio, LG TV on `hdmi-output-0`. The minimise effect is now `none`; still no `~/install.log`. To check with v0.12.1:
 

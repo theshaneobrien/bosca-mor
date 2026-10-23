@@ -778,7 +778,7 @@ func test_row_icons_are_decoded_once_per_open() -> void:
 	IconResolver.reset()
 	IconResolver.roots = {"dropin": icons, "cache": icons, "flatpak": [], "themes": [], "pixmaps": [], "desktop": [icons]}
 	await _setup()
-	st._scale = 1.0                     # as on a 1080p TV (the headless window is tiny)
+	st.fixed_scale = 1.0                # as on a 1080p TV (the headless window is tiny)
 	st.open()                           # drawn again at that scale
 	_act("nav_right")
 	var tex: Texture2D = _row_glyph(0).texture

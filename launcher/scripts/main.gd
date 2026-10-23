@@ -356,6 +356,7 @@ func _on_launch_timed_out(app_id: String) -> void:
 # Home or Guide while hidden. An app with keep_on_home is still running.
 func _on_show_home() -> void:
 	_panel_running = false
+	_remote_key()                      # Home on the remote is a key press
 	show_launcher()
 	if home.is_launching():
 		home.play_return()

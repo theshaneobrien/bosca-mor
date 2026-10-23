@@ -106,9 +106,13 @@ func _input(ev: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 	elif ev is InputEventMouseButton:
 		if ev.pressed and not _is_wheel(ev):
-			click_at_pointer = mode == Mode.POINTER and cursor_visible
-			_set_mode(Mode.POINTER)
-			_wake_cursor()
+			# A click points only when the pointer is already in use (pointer
+			# mode, even once the cursor has hidden after POINTER_HIDE still).
+			# Otherwise it is OK on what is focused, and the mode stays, so a
+			# second OK-click does the same. A deliberate move starts pointing.
+			click_at_pointer = mode == Mode.POINTER
+			if click_at_pointer:
+				_wake_cursor()
 	elif ev is InputEventMouseMotion:
 		_track_motion(ev)
 

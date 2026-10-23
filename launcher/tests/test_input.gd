@@ -284,7 +284,7 @@ func test_a_click_without_the_pointer_in_use_opens_the_focused_tile() -> void:
 	_click(_centre(3))
 	eq(launched, ["plex"], "remote mode: OK on the focused tile")
 	eq(home.focus, 1, "focus stays where the remote put it")
-	eq(im.mode, Mode.POINTER, "a click still enters pointer mode")
+	eq(im.mode, Mode.REMOTE, "and the mode stays, so the next OK-click does the same")
 	home.play_return()
 	_key(KEY_UP)                         # any key: the remote again
 	_click(Vector2(960, 60))
@@ -293,11 +293,27 @@ func test_a_click_without_the_pointer_in_use_opens_the_focused_tile() -> void:
 	_use_pointer(Vector2(100, 100), 2000)
 	im._on_hide_timeout()
 	_click(_centre(5))
-	eq(launched, ["plex", "plex", "plex"], "the cursor had hidden: OK on the focused tile")
+	eq(launched[-1], "browser", "the pointer in use, cursor hidden after a rest: the tile under it")
 	eq(im.cursor_visible, true, "and the click shows the cursor")
 	home.play_return()
 	_click(_centre(5))
 	eq(launched[-1], "browser", "with the cursor showing, the tile under it")
+	_teardown()
+
+
+func test_ok_clicks_in_a_row_stay_on_the_focused_tile() -> void:
+	# The G20S OK may be a left click with the air mouse on. Two OK presses
+	# with no key between must both act on the focused tile, not on wherever
+	# the hidden pointer drifted.
+	await _setup()
+	launched.clear()
+	_key(KEY_RIGHT)
+	_key(KEY_RIGHT, false)
+	_click(_centre(4))
+	home.play_return()
+	_click(_centre(5))
+	eq(launched, ["plex", "plex"], "both OK-clicks open the focused tile")
+	eq(im.mode, Mode.REMOTE, "still remote")
 	_teardown()
 
 

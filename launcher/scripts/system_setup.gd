@@ -80,6 +80,8 @@ func configure(prefs: Dictionary) -> void:
 ## At login: check now, then every SETUP_CHECK_EVERY for the first 30 s.
 func start() -> void:
 	if not enabled:
+		if OS.get_name() == "Linux" and not OS.has_feature("template") and DisplayServer.get_name() != "headless":
+			print("picture: off, sound and Wi-Fi too: only the exported build sets them")
 		return
 	_boot_left = Tokens.SETUP_BOOT_CHECKS - 1
 	check(true)

@@ -135,6 +135,30 @@ class TestKeys(DaemonCase):
         self.assertEqual(self.d.events("power_confirm"), [{"evt": "power_confirm"}])
         self.assertEqual(self.d.ran, [])
 
+    def test_wait_helper_leaves_a_slow_command_running(self):
+        # systemctl poweroff can take longer than POWER_WAIT_S to return; the
+        # wait must not kill it (that would stop the power-off).
+        d = bi.Daemon.__new__(bi.Daemon)
+        old = bi.POWER_WAIT_S
+        bi.POWER_WAIT_S = 0.2
+        try:
+            started = []
+            real = bi.subprocess.Popen
+
+            def popen(*a, **k):
+                started.append(real(*a, **k))
+                return started[-1]
+            bi.subprocess.Popen = popen
+            try:
+                self.assertEqual(d.run_wait(["sleep", "2"]), 0)
+            finally:
+                bi.subprocess.Popen = real
+            self.assertIsNone(started[0].poll(), "still running after the wait")
+            started[0].kill()
+            started[0].wait()
+        finally:
+            bi.POWER_WAIT_S = old
+
     def test_ok_key_is_accept_while_the_launcher_shows(self):
         # G20S with the air mouse off (box test): OK may send KEY_OK or
         # KEY_SELECT, which X gives the launcher no key for (D82).
@@ -397,6 +421,21 @@ class TestApps(DaemonCase):
             self.d.on_home()
         self.assertTrue(self.d.app.closing)
         del self.d.signal_group   # back to the real one for tearDown
+
+
+class TestHomeWhileClosing(DaemonCase):
+    def test_home_on_the_desktop_while_the_app_ends_still_returns(self):
+        # The launch timeout is ending the app while the viewer is on the
+        # desktop; Home pressed now must not be lost.
+        self.d.handle({"cmd": "launch", "id": "a", "argv": ["sleep", "60"]})
+        app = self.d.app
+        app.closing = True
+        app.show_after = False
+        self.d.visible = False
+        self.d.desktop = True
+        self.d.on_home()
+        self.assertTrue(app.show_after)
+        self.assertTrue(app.return_after)
 
 
 class TestBadCommands(DaemonCase):
