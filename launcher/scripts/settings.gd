@@ -16,7 +16,8 @@ signal launch_panel(app: Dictionary)
 signal remove_requested(app: Dictionary)
 ## The next Picture was chosen; Main tries it and asks to keep it (D79).
 signal picture_requested(mode: String)
-## Something for Main to show as a toast.
+## Something for Main to show as a toast (Wi-Fi, and any other Settings
+## message, such as a save that failed).
 signal wifi_message(text: String)
 
 const Tokens := preload("res://theme/tokens.gd")
@@ -68,6 +69,8 @@ var autostart_path := ""
 var desktop_dirs: Array = []
 ## Where website tiles get their Firefox profiles; empty: Paths.profiles_dir().
 var profiles_dir := ""
+## The kiosk prefs each new website profile starts with.
+var user_js := USER_JS
 var accepting_input := false
 ## The daemon's last memory warning, for About.
 var memory_note := ""
@@ -84,6 +87,8 @@ var prefs := {}
 var _apps: Array = []       # every valid app, hidden ones too, in file order
 var _raw := {}              # id -> entry as written in apps.json
 var _invalid := []          # entries that failed to load, kept on save
+var _broken := ""           # why apps.json as a whole won't load; nothing is saved while set
+var _row_icons := {}        # app id and icon -> [found, texture], filled as rows draw, cleared by open()
 var _entries: Array = []    # picker: installed apps not yet on Home
 var _items: Array = []      # content items for the current level
 var _scroll := 0
@@ -115,6 +120,7 @@ func _ready() -> void:
 
 func open() -> void:
 	_load_apps()
+	_row_icons.clear()          # a drop-in swapped since last time shows now
 	prefs = Prefs.load_prefs(state_path)
 	section = 0
 	level = "nav"
@@ -157,7 +163,9 @@ func _unhandled_input(ev: InputEvent) -> void:
 func handle(ev: InputEvent) -> bool:
 	if _osk.visible:
 		return _osk.handle(ev)
-	if ev.is_action_pressed("nav_up", true):
+	if ev is InputEventMouseButton and ev.is_action_pressed("accept"):
+		_click(ev.position)
+	elif ev.is_action_pressed("nav_up", true):
 		_step(-1)
 	elif ev.is_action_pressed("nav_down", true):
 		_step(1)
@@ -176,6 +184,45 @@ func handle(ev: InputEvent) -> bool:
 		return false
 	_render()
 	return true
+
+
+# A click acts only on the section, row or button under the pointer, the way
+# Home and the sidebar do; a click on nothing does nothing. Hover doesn't move
+# focus: rows scroll, and air-mouse drift would chase them.
+func _click(pos: Vector2) -> void:
+	if moving:
+		_drop()
+		return
+	var hit := _hit(pos)
+	if hit.has("nav"):
+		section = hit.nav
+		_enter()
+	elif hit.has("item") and hit.item < _items.size():
+		if level == "nav":
+			level = "content"   # the list already shows this section's rows
+		item = hit.item
+		col = hit.col
+		_accept()
+
+
+## What a point lands on: {"nav": section}, {"item": i, "col": c} or {}.
+func _hit(pos: Vector2) -> Dictionary:
+	for i in _nav.get_child_count():
+		if _nav.get_child(i).get_global_rect().has_point(pos):
+			return {"nav": i}
+	if _add.visible and _add.get_global_rect().has_point(pos):
+		return {"item": 0, "col": 0}
+	var first := 1 if _add.visible else 0     # as _render lays the rows out
+	for k in _list.get_child_count():
+		var r: Control = _list.get_child(k)
+		if not r.get_global_rect().has_point(pos):
+			continue
+		var c := 0
+		for b in r.get_child(0).get_children():   # an app row's start page and Remove
+			if b.has_meta("col") and b.get_global_rect().has_point(pos):
+				c = b.get_meta("col")
+		return {"item": first + _scroll + k, "col": c}
+	return {}
 
 
 func _step(d: int) -> void:
@@ -282,7 +329,7 @@ func _enter() -> void:
 	if section_id() == "network" and setup:
 		setup.wifi_scan()
 	_build_items()
-	if section_id() == "apps" and _items.size() > 1:
+	if section_id() == "apps" and not _broken and _items.size() > 1:
 		item = 1
 
 
@@ -305,9 +352,18 @@ func _load_apps() -> void:
 	_apps = r.apps
 	_raw = r.raw
 	_invalid = r.invalid
+	_broken = r.errors[0] if r.broken else ""
 
 
+## Writes the list. On a failure the list is read back, so placeholders and
+## unsaved edits go and Settings matches the file and Home again.
 func _save_apps() -> void:
+	if _broken:
+		# Writing now would replace every entry in the file with what Settings
+		# holds, which is nothing (or only the new one).
+		push_warning("not writing apps.json, it doesn't load: " + _broken)
+		_load_apps()
+		return
 	var entries := []
 	for a in _apps:
 		entries.append(_raw[a.id])
@@ -316,6 +372,8 @@ func _save_apps() -> void:
 	var err := Apps.save_file(path, entries)
 	if err != OK:
 		push_warning("could not write %s: %s" % [path, error_string(err)])
+		_load_apps()
+		wifi_message.emit("Couldn't save the app list")
 		return
 	if apps_path.is_empty():
 		apps_path = path
@@ -379,7 +437,11 @@ func _on_osk_done(text: String) -> void:
 		"site_url":
 			var url := _normal_url(text)
 			if url and _site_name:
-				_add_website(_site_name, url)
+				# No host (just "https://", say) makes an entry apps.json rejects.
+				if _host(url).is_empty():
+					wifi_message.emit("That address doesn't look right")
+				else:
+					_add_website(_site_name, url)
 		"wifi_password":
 			if text and setup:
 				setup.wifi_join(_wifi_net.ssid, text, _wifi_net.known)
@@ -405,7 +467,7 @@ func _join(net: Dictionary) -> void:
 func ask_wifi_password(net: Dictionary) -> void:
 	_wifi_net = net
 	_osk_for = "wifi_password"
-	_osk.open("Password for %s" % net.ssid, "")
+	_osk.open("Password for %s" % net.ssid, "", true)   # bullets on the TV, not the password
 	_render()
 
 
@@ -423,6 +485,11 @@ static func _normal_url(text: String) -> String:
 	if url and not url.contains("://"):
 		url = "https://" + url
 	return url
+
+
+## An address's site name: https://www.bbc.co.uk/iplayer -> bbc.co.uk.
+static func _host(url: String) -> String:
+	return url.get_slice("://", 1).get_slice("/", 0).trim_prefix("www.")
 
 
 ## Takes an app off Home (after Main's confirm). Its Firefox profile, if it
@@ -487,11 +554,9 @@ func _add_website(site_name: String, url: String) -> void:
 	var id := DesktopEntries.id_for(site_name, _raw)
 	var profile := (profiles_dir if profiles_dir else Paths.profiles_dir()).path_join(id)
 	DirAccess.make_dir_recursive_absolute(profile)
-	if not FileAccess.file_exists(profile.path_join("user.js")):
-		Apps.write_atomic(profile.path_join("user.js"), FileAccess.get_file_as_string(USER_JS))
-	var host := url.get_slice("://", 1).get_slice("/", 0).trim_prefix("www.")
+	_seed_user_js(profile.path_join("user.js"), site_name)
 	_raw[id] = {
-		"id": id, "name": site_name, "kind": "Web", "description": host,
+		"id": id, "name": site_name, "kind": "Web", "description": _host(url),
 		"tint": "#" + Tokens.TILE_TINTS["#" + accent.to_html(false)].to_html(false),
 		"accent": "#" + accent.to_html(false),
 		"url": url, "url_editable": true,
@@ -502,6 +567,21 @@ func _add_website(site_name: String, url: String) -> void:
 	level = "content"
 	_build_items()
 	item = _items.size() - 1
+
+
+## A profile's kiosk prefs, written when it has none (or an empty file, from
+## a build that left the bundled copy out). Never an empty file: Firefox
+## would then start with its first-run prompts and without DRM.
+func _seed_user_js(path: String, site_name: String) -> void:
+	if FileAccess.file_exists(path) and not FileAccess.get_file_as_string(path).is_empty():
+		return
+	var prefs_text := FileAccess.get_file_as_string(user_js)
+	if prefs_text.is_empty():
+		push_warning("no kiosk prefs at %s; %s's profile not seeded" % [user_js, site_name])
+		wifi_message.emit("Couldn't set up the browser for %s" % site_name)
+		return
+	if Apps.write_atomic(path, prefs_text) != OK:
+		push_warning("could not write " + path)
 
 
 # Preferences ------------------------------------------------------------------
@@ -544,11 +624,18 @@ func refresh() -> void:
 	var was := _current()
 	_build_items()
 	if not was.is_empty():
+		var found := false
 		for i in _items.size():
 			var it: Dictionary = _items[i]
 			if it.type == was.type and (it.net.ssid == was.net.ssid if it.type == "wifi" else it.get("key", it.get("label")) == was.get("key", was.get("label"))):
 				item = i
+				found = true
 				break
+		# The row went (a network out of range, or "Searching" replaced by the
+		# networks): never leave focus on a network nobody chose, where one OK
+		# would join it. Row 0 is "Connected to", where OK does nothing.
+		if not found and item < _items.size() and _items[item].type == "wifi":
+			item = 0
 	item = clampi(item, 0, maxi(_items.size() - 1, 0))
 	_render()
 
@@ -564,6 +651,11 @@ func _build_items() -> void:
 		return
 	match section_id():
 		"apps":
+			if _broken:
+				# No Add app and no rows: any change would be saved over the file.
+				_items.append({"type": "info", "label": "Apps can't be changed here", "value": _broken, "warn": true})
+				_items.append({"type": "info", "label": "Fix or delete apps.json, then open Settings again", "value": ""})
+				return
 			_items.append({"type": "add"})
 			for a in _apps:
 				_items.append({"type": "app", "app": a})
@@ -767,7 +859,7 @@ func _render() -> void:
 	var head: Array = HEADS["picker" if level == "picker" else section_id()]
 	_head_title.text = head[0]
 	_head_sub.text = head[1]
-	var show_add := level != "picker" and section_id() == "apps"
+	var show_add := level != "picker" and section_id() == "apps" and not _broken
 	_add.visible = show_add
 	if show_add:
 		_style_add(level == "content" and item == 0)
@@ -861,11 +953,12 @@ func _row(it: Dictionary, on: bool) -> Control:
 			tile.custom_minimum_size = Vector2(Tokens.ROW_TILE, Tokens.ROW_TILE)
 			tile.size_flags_vertical = SIZE_SHRINK_CENTER
 			tile.add_theme_stylebox_override("panel", UI.box(app.tint, Tokens.ROW_TILE_RADIUS))
-			var found := IconResolver.find(app)
+			var icon := _row_icon(app)
+			var found: Dictionary = icon[0]
 			var g: TextureRect
 			if found:
 				g = _icon("apps", app.accent, Tokens.ROW_GLYPH, Tokens.ROW_GLYPH_STROKE)
-				g.texture = IconResolver.texture(found.path, roundi(Tokens.ROW_TILE * Tokens.ICON_INSET * _scale), app.id + "-row")
+				g.texture = icon[1]
 				g.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
 			else:
 				g = _icon(Glyphs.name_for(app), app.accent, Tokens.ROW_GLYPH, Tokens.ROW_GLYPH_STROKE)
@@ -882,10 +975,14 @@ func _row(it: Dictionary, on: bool) -> Control:
 				src.size_flags_vertical = SIZE_SHRINK_CENTER
 				row.add_child(src)
 			if app.url_editable:
-				row.add_child(_url_button(app.url, on and col == 1))
+				var url := _url_button(app.url, on and col == 1)
+				url.set_meta("col", 1)              # for a click (_hit)
+				row.add_child(url)
 			row.add_child(_kind(app.kind))
 			row.add_child(_toggle(not app.hidden))
-			row.add_child(_small_button("Remove", on and col > 0 and col == _remove_col(app)))
+			var remove := _small_button("Remove", on and col > 0 and col == _remove_col(app))
+			remove.set_meta("col", _remove_col(app))
+			row.add_child(remove)
 		"entry":
 			var e: Dictionary = it.entry
 			var n := UI.label(e.name, Tokens.sans(500, Tokens.ROW_FONT), Tokens.ROW_FONT, Tokens.TEXT)
@@ -906,6 +1003,20 @@ func _row(it: Dictionary, on: bool) -> Control:
 					v.size_flags_vertical = SIZE_SHRINK_CENTER
 					row.add_child(v)
 	return p
+
+
+## An app row's icon as [found, texture], looked up and decoded once per
+## open: each row is rebuilt on every key press, and a PNG drop-in is a full
+## decode plus mipmaps.
+func _row_icon(app: Dictionary) -> Array:
+	var key: String = "%s|%s" % [app.id, app.icon]
+	if not _row_icons.has(key):
+		var found := IconResolver.find(app)
+		var tex: Texture2D = null
+		if found:
+			tex = IconResolver.texture(found.path, roundi(Tokens.ROW_TILE * Tokens.ICON_INSET * _scale), app.id + "-row")
+		_row_icons[key] = [found, tex]
+	return _row_icons[key]
 
 
 func _icon(glyph: String, color: Color, px: int, stroke: float) -> TextureRect:

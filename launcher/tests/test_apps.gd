@@ -43,6 +43,42 @@ func test_bad_file_gives_empty_list() -> void:
 	eq(Apps.load_file("res://tests/fixtures/nope.json").apps.size(), 0, "missing file")
 
 
+# A file that is there but won't load is "broken": Settings must not save
+# over it (that would keep only what it holds, which is nothing).
+func test_a_broken_file_is_flagged() -> void:
+	var text := FileAccess.get_file_as_string(Apps.DEFAULT_PATH)
+	var at := text.find("},\n")
+	var r := Apps.parse(text.left(at + 1) + text.substr(at + 2))    # one comma gone
+	check(r.broken, "a missing comma")
+	check(r.errors[0].begins_with("apps.json line "), "names the line: %s" % [r.errors])
+	check(Apps.parse("{not json").broken, "garbage")
+	check(Apps.parse("{}").broken, "not a list")
+	check(not Apps.load_file(Apps.DEFAULT_PATH).broken, "the default is fine")
+	check(not Apps.load_file("res://tests/fixtures/apps_bad.json").broken, "bad entries alone keep the rest")
+	check(not Apps.load_file("res://tests/fixtures/nope.json").broken, "no file is not a broken one")
+
+
+# A full disk fails inside close(), which Godot doesn't report: the temp
+# file is checked before it replaces the real one.
+func test_write_atomic_replaces_only_with_a_whole_file() -> void:
+	var path := ProjectSettings.globalize_path("user://test-atomic-%d.json" % Time.get_ticks_usec())
+	var tmp := path + ".tmp"
+	eq(Apps.write_atomic(path, "café\n"), OK, "written")
+	eq(FileAccess.get_file_as_string(path), "café\n", "whole")
+	check(not FileAccess.file_exists(tmp), "no temp file left")
+	var f := FileAccess.open(tmp, FileAccess.WRITE)
+	f.store_string("caf")
+	f.close()
+	check(not Apps._landed(tmp, "café\n"), "a short temp file is caught")
+	check(Apps._landed(tmp, "caf"), "a whole one passes")
+	DirAccess.remove_absolute(tmp)
+	DirAccess.make_dir_absolute(tmp)          # the temp file can't be written at all
+	check(Apps.write_atomic(path, "new") != OK, "fails")
+	eq(FileAccess.get_file_as_string(path), "café\n", "the old file kept")
+	DirAccess.remove_absolute(tmp)
+	DirAccess.remove_absolute(path)
+
+
 func test_user_expanded() -> void:
 	var r := Apps.parse('[{"id":"x","name":"X","kind":"Web","description":"d","tint":"#000000","accent":"#ffffff","argv":["firefox","--profile","/home/USER/p","{url}"]}]')
 	var argv: Array = r.apps[0].argv

@@ -1,17 +1,24 @@
 # Installed apps from their .desktop files, for Settings > Apps > Add app.
-# Follows the Desktop Entry spec closely enough for Exec lines: quoting,
-# escapes, and field codes (%u, %F and the rest) dropped.
+# Follows the Desktop Entry spec closely enough for Exec lines: the string
+# escapes (\s, \\ and the rest) first, then quoting, and field codes (%u, %F
+# and the rest) dropped. Single quotes are read too, as GLib does: Flatpak's
+# exporter quotes arguments that way.
 extends RefCounted
 
 const Paths := preload("res://scripts/paths.gd")
 
 const FIELD_CODES := ["%f", "%F", "%u", "%U", "%d", "%D", "%n", "%N", "%i", "%c", "%k", "%v", "%m"]
-const KINDS := {
-	"Video": ["AudioVideo", "Video", "TV", "Player"],
-	"Music": ["Audio", "Music"],
-	"Games": ["Game", "Emulator"],
-	"Web": ["WebBrowser", "Network"],
-}
+const STRING_ESCAPES := {"s": " ", "n": "\n", "t": "\t", "r": "\r", "\\": "\\"}
+const QUOTED_ESCAPES := ["\"", "`", "$", "\\"]   # what a backslash escapes inside "..."
+# The first kind with a matching category wins. Every music player also lists
+# AudioVideo and often Player, so those generic ones come last.
+const KINDS := [
+	["Video", ["Video", "TV"]],
+	["Music", ["Audio", "Music"]],
+	["Games", ["Game", "Emulator"]],
+	["Web", ["WebBrowser"]],
+	["Video", ["AudioVideo", "Player"]],
+]
 
 
 static func dirs() -> Array[String]:
@@ -57,7 +64,7 @@ static func parse(text: String) -> Dictionary:
 		if not keys.has(k):
 			keys[k] = kv[1].strip_edges()
 	if keys.get("Type", "") != "Application" or keys.get("NoDisplay", "") == "true" \
-			or keys.get("Hidden", "") == "true" or not keys.has("Name") or not keys.has("Exec"):
+			or keys.get("Hidden", "") == "true" or keys.get("Name", "").is_empty() or not keys.has("Exec"):
 		return {}
 	var argv := exec_to_argv(keys.Exec)
 	if argv.is_empty():
@@ -71,26 +78,37 @@ static func parse(text: String) -> Dictionary:
 	}
 
 
+## The Exec value as it is written in the file, as an argv.
 static func exec_to_argv(exec: String) -> Array[String]:
+	exec = _unescape(exec)
 	var args: Array[String] = []
 	var cur := ""
-	var quoted := false
+	var quote := ""          # "", "\"" or "'"
 	var started := false
 	var i := 0
 	while i < exec.length():
 		var c := exec[i]
-		if quoted:
-			if c == "\\" and i + 1 < exec.length():
+		if quote == "'":
+			if c == "'":
+				quote = ""
+			else:
+				cur += c
+		elif quote == "\"":
+			if c == "\\" and i + 1 < exec.length() and exec[i + 1] in QUOTED_ESCAPES:
 				i += 1
 				cur += exec[i]
 			elif c == "\"":
-				quoted = false
+				quote = ""
 			else:
 				cur += c
-		elif c == "\"":
-			quoted = true
+		elif c == "\"" or c == "'":
+			quote = c
 			started = true
-		elif c == " " or c == "\t":
+		elif c == "\\" and i + 1 < exec.length():
+			i += 1
+			cur += exec[i]
+			started = true
+		elif c == " " or c == "\t" or c == "\n":
 			if started:
 				args.append(cur)
 			cur = ""
@@ -111,12 +129,26 @@ static func exec_to_argv(exec: String) -> Array[String]:
 	return out
 
 
+# The string escapes every .desktop value has. Others are left as they are.
+static func _unescape(s: String) -> String:
+	var out := ""
+	var i := 0
+	while i < s.length():
+		if s[i] == "\\" and i + 1 < s.length() and STRING_ESCAPES.has(s[i + 1]):
+			out += STRING_ESCAPES[s[i + 1]]
+			i += 2
+			continue
+		out += s[i]
+		i += 1
+	return out
+
+
 static func kind_for(categories: String) -> String:
 	var cats := categories.split(";", false)
-	for kind in KINDS:
-		for c in KINDS[kind]:
+	for pair in KINDS:
+		for c in pair[1]:
 			if c in cats:
-				return kind
+				return pair[0]
 	return "Other"
 
 
