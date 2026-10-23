@@ -4,6 +4,7 @@ const MainScene := preload("res://scenes/main.tscn")
 const Apps := preload("res://scripts/apps.gd")
 const State := preload("res://scripts/state.gd")
 const InputModeScript := preload("res://scripts/input_mode.gd")
+const Tokens := preload("res://theme/tokens.gd")
 const S := State.Screen
 
 # The SPEC navigation table, one row per cell. Each case starts with Home
@@ -409,4 +410,94 @@ func test_no_daemon_on_linux_fails_visibly() -> void:
 	await tree.process_frame
 	check(not main.home.is_launching(), "back on Home")
 	check(main.toast.visible, "toast shown")
+	_teardown()
+
+
+# And Power off with no daemon doesn't pretend: straight back to Home, saying so.
+func test_no_daemon_on_linux_power_says_so() -> void:
+	await _setup()
+	main.daemon.stand_in = false
+	main.state.ask("poweroff")
+	main.state.set_confirm_focus(1)
+	main.state.handle("accept")
+	eq(main.state.screen, S.OFF, "Shutting down")
+	await tree.process_frame
+	eq(main.state.screen, S.HOME, "straight back to Home")
+	check(not main._off.visible, "off screen gone")
+	eq(main.toast.text, "Couldn't power off", "toast")
+	_teardown()
+
+
+func test_power_failed_from_the_daemon_returns_home() -> void:
+	await _setup()
+	main.daemon.stand_in = true
+	main.state.ask("restart")
+	main.state.set_confirm_focus(1)
+	main.state.handle("accept")
+	eq(main.state.screen, S.OFF, "Restarting")
+	main.daemon._dispatch({"evt": "power_failed", "action": "reboot"})
+	eq(main.state.screen, S.HOME, "back to Home")
+	eq(main.toast.text, "Couldn't restart", "toast")
+	main.daemon._dispatch({"evt": "power_failed", "action": "poweroff"})
+	eq(main.toast.queue.size(), 0, "nothing more once off that screen")
+	_teardown()
+
+
+# While a Cinnamon panel opens, Settings takes no input: a second OK used to
+# launch it twice, and Back could leave Settings unseen.
+func test_panel_opening_takes_no_input() -> void:
+	await _setup()
+	main.state.go(S.SETTINGS)
+	_act("nav_down")
+	_act("nav_down")
+	_act("nav_right")
+	main.daemon.calls.clear()
+	_act("accept")
+	_act("accept")
+	eq(main.daemon.calls, [["launch", "network-settings"]], "launched once")
+	_act("back")
+	_act("back")
+	eq(main.state.screen, S.SETTINGS, "Back does nothing while it opens")
+	check(main.loader.active, "loading screen started")
+	check(main.loader.get_index() > main.settings.get_index(), "drawn over Settings")
+	main.daemon.app_window.emit("network-settings")
+	main.daemon.app_exited.emit("network-settings", 0)
+	check(not main.is_hidden, "back when it closes")
+	check(main.settings.accepting_input, "Settings takes input again")
+	_teardown()
+
+
+func _move(pos: Vector2) -> void:
+	var e := InputEventMouseMotion.new()
+	e.position = pos
+	e.global_position = pos
+	tree.root.push_input(e, true)
+
+
+# The remote's Power reaches the launcher only through the daemon. It counts
+# as a key press (remote mode), and a pointer resting on the action button
+# when the confirm opens can't take the focus off Cancel by jitter (Law 2).
+func test_power_from_the_daemon_keeps_cancel_focused() -> void:
+	await _setup()
+	var im = tree.root.get_node("InputMode")
+	im._set_mode(InputModeScript.Mode.POINTER)
+	main.daemon.power_pressed.emit()
+	eq(im.mode, InputModeScript.Mode.REMOTE, "remote mode")
+	eq(main.state.confirm_focus, 0, "Cancel focused")
+	await tree.process_frame
+	im._set_mode(InputModeScript.Mode.POINTER)
+	var action: Vector2 = main.confirm._buttons[1].get_global_rect().get_center()
+	_move(action)
+	_move(action + Vector2(1, 0))
+	_move(action + Vector2(-2, 1))
+	eq(main.state.confirm_focus, 0, "jitter leaves Cancel focused")
+	_move(action + Vector2(Tokens.POINTER_MOVE + 10, 0))
+	eq(main.state.confirm_focus, 1, "a real move still points at it")
+	main.state.set_confirm_focus(0)
+	im._set_mode(InputModeScript.Mode.POINTER)
+	main.daemon.accept_pressed.emit()
+	eq(im.mode, InputModeScript.Mode.REMOTE, "the daemon's OK too")
+	await tree.process_frame         # its Accept arrives with the next frame: let it land here
+	await tree.process_frame
+	eq(main.state.screen, S.SIDEBAR, "and it pressed Cancel")
 	_teardown()

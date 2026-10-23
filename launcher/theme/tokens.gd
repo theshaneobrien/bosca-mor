@@ -257,6 +257,8 @@ const HOVER_DWELL := 0.120
 const WIFI_POLL := 30.0
 const HIDDEN_SLEEP_USEC := 100000   # low processor sleep while hidden: about 10 wakeups a second
 const SHOWN_SLEEP_USEC := 16666     # D84: and while shown, one 60 Hz frame (Godot's default is 6900)
+const DAEMON_POLL := 0.1            # seconds between reads of the daemon socket, hidden or shown
+const DAEMON_RETRY := 1.0           # seconds between tries to reach a daemon that isn't there
 
 # Fonts. DM Sans comes as static optical-size instances (24pt and 40pt):
 # MSDF can't draw the variable font's overlapping contours cleanly.

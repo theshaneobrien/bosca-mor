@@ -5,6 +5,7 @@ const Apps := preload("res://scripts/apps.gd")
 const State := preload("res://scripts/state.gd")
 const Tokens := preload("res://theme/tokens.gd")
 const Wifi := preload("res://scripts/wifi.gd")
+const SettingsView := preload("res://scripts/settings.gd")
 
 var main: Control
 
@@ -293,4 +294,120 @@ func test_loading_screen_goes_on_timeout_and_failure() -> void:
 	_finish_tweens()
 	main.daemon.launch_failed.emit("youtube", "nope")
 	check(not main.loader.active, "gone on a failed launch")
+	_teardown()
+
+
+# D86: picking another tile while an app runs behind Home (keep_on_home, or
+# Power then Cancel). The daemon ends the old app first; its exit must not
+# end the new launch, or the new app comes up over an awake launcher.
+func test_replacing_an_app_keeps_the_new_launch() -> void:
+	await _setup()
+	_act("accept")                         # YouTube, left running on Home
+	_finish_tweens()
+	main.daemon.app_window.emit("youtube")
+	main.daemon.show_home.emit()
+	_finish_tweens()
+	_check_shown("Home over YouTube")
+	main.home.set_focus(1, false)
+	_act("accept")                         # Plex replaces it
+	main.daemon._dispatch({"evt": "app_exited", "id": "youtube", "code": 0, "replaced": true})
+	check(main.home.is_launching(), "still launching Plex")
+	eq(main.daemon.waiting_id, "plex", "still waiting for Plex's window")
+	main.daemon.app_exited.emit("youtube", 0)   # or YouTube quit by itself just then
+	check(main.home.is_launching(), "an older app's exit doesn't end it either")
+	_finish_tweens()
+	check(main.waiting_for_window, "black, waiting for Plex")
+	main.daemon.app_window.emit("plex")
+	_check_hidden("asleep behind Plex")
+	_teardown()
+
+
+func test_relaunching_the_running_app() -> void:
+	await _setup()
+	_act("accept")
+	_finish_tweens()
+	main.daemon.app_window.emit("youtube")
+	main.daemon.show_home.emit()
+	_finish_tweens()
+	_act("accept")                         # the same tile again: same id
+	main.daemon._dispatch({"evt": "app_exited", "id": "youtube", "code": 0, "replaced": true})
+	check(main.home.is_launching(), "still launching")
+	eq(main.daemon.waiting_id, "youtube", "still waiting for the new window")
+	_finish_tweens()
+	main.daemon.app_window.emit("youtube")
+	_check_hidden("asleep behind the new one")
+	_teardown()
+
+
+func test_replaced_app_does_not_end_a_panel() -> void:
+	await _setup()
+	_act("accept")
+	_finish_tweens()
+	main.daemon.app_window.emit("youtube")
+	main.daemon.show_home.emit()
+	_finish_tweens()
+	main.state.go(State.Screen.SETTINGS)
+	main._launch_panel(SettingsView.PANELS.network)
+	main.daemon._dispatch({"evt": "app_exited", "id": "youtube", "code": 0, "replaced": true})
+	check(main.is_hidden and main._panel_running, "still opening the panel")
+	main.daemon.app_exited.emit("network-settings", 0)
+	check(not main.is_hidden and not main._panel_running, "back when the panel closes")
+	_teardown()
+
+
+# Power within Desktop's fade to black: the black cover must go with it, or
+# the confirm and then Home sit under black.
+func test_leaving_during_the_desktop_fade_clears_the_cover() -> void:
+	await _setup()
+	main.state.handle("back")
+	main.state.run_item("desktop")
+	check(main._cover.visible, "fading to black")
+	main.daemon.power_pressed.emit()
+	_finish_tweens()
+	eq(main.state.screen, State.Screen.CONFIRM, "confirm open")
+	check(not main._cover.visible, "no black cover over it")
+	eq(main._cover.color.a, 0.0, "cover clear")
+	check(not main.is_hidden, "never hid")
+	main.state.go(State.Screen.HOME)
+	main.state.run_item("desktop")
+	main.state.show_home()                 # the window got the focus back mid-fade
+	_finish_tweens()
+	eq(main.state.screen, State.Screen.HOME, "Home")
+	check(not main._cover.visible, "cover gone on a focus-in too")
+	check(not main.is_hidden, "still shown")
+	_teardown()
+
+
+# Power from behind an app: the last frame drawn was black, so no blur is
+# taken from it, and Cancel shows the sidebar over Home as it is.
+func test_power_from_an_app_takes_no_black_blur() -> void:
+	await _setup()
+	_act("accept")
+	_finish_tweens()
+	main.daemon.app_window.emit("youtube")
+	main.blur_captures = 0
+	main.daemon.power_pressed.emit()
+	eq(main.state.screen, State.Screen.CONFIRM, "confirm")
+	eq(main.blur_captures, 0, "nothing captured from the black")
+	main.state.handle("accept")            # Cancel
+	eq(main.state.screen, State.Screen.SIDEBAR, "sidebar")
+	eq(main.blur_captures, 0, "nor from the frame with the dialog in it")
+	main.state.go(State.Screen.HOME)
+	main.state.handle("power")
+	eq(main.blur_captures, 1, "captured when Home is on screen")
+	_teardown()
+
+
+func test_settings_confirms_take_no_blur() -> void:
+	await _setup()
+	main.state.go(State.Screen.SETTINGS)
+	main.blur_captures = 0
+	main.state.ask("remove")
+	main.state.cancel_confirm()
+	main.state.ask("picture")
+	main.state.cancel_confirm()
+	eq(main.state.screen, State.Screen.SETTINGS, "back in Settings")
+	eq(main.blur_captures, 0, "remove and picture go back to Settings, not the sidebar")
+	main.state.handle("power")
+	eq(main.blur_captures, 1, "the power confirm still does")
 	_teardown()

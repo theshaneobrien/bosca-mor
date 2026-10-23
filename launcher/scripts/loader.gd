@@ -1,6 +1,7 @@
 # The loading screen on the black after a launch: the app's tile, "Opening
 # <name>", and three dots pulsing in turn. It appears only when the app takes
 # longer than LOADER_DELAY, and goes as soon as the app's window is up (D76).
+# A Cinnamon panel opened from Settings gets it too, over Settings.
 extends Control
 
 const Tokens := preload("res://theme/tokens.gd")
@@ -95,6 +96,12 @@ func _start_pulse() -> void:
 
 
 func _build() -> void:
+	# Its own black: over Home's launch fade it changes nothing, and over
+	# Settings (a Cinnamon panel opening) it hides what can't be used now.
+	var black := ColorRect.new()
+	black.size = Tokens.BASE_SIZE
+	black.color = Tokens.BLACK
+	add_child(black)
 	var center := CenterContainer.new()
 	center.size = Tokens.BASE_SIZE
 	add_child(center)
