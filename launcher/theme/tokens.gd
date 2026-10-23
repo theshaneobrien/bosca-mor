@@ -209,6 +209,7 @@ const LOADER_FPS := 30              # frame cap while it shows, to leave the CPU
 const SETUP_CHECK_EVERY := 5.0      # seconds between checks after login
 const SETUP_BOOT_CHECKS := 7        # at login, then every 5 s: the first 30 s
 const SETUP_CMD_TIMEOUT := 5        # seconds before a stuck xrandr or pactl is stopped
+const SETUP_CMD_POLL_MS := 10       # ms between looks at a running command's output (worker thread only)
 const PICTURE_KEEP := 15.0          # a new picture goes back unless it is kept by then
 const WIFI_SCAN_TIMEOUT := 15       # D81: seconds for nmcli to list networks (a rescan takes a few)
 const WIFI_CONNECT_TIMEOUT := 45    # and to join one

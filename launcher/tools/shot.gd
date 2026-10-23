@@ -40,6 +40,7 @@ static func _fake_run(argv: Array, _limit := 0, _stderr := false) -> Dictionary:
 
 
 func _initialize() -> void:
+	OS.set_environment("BOSCAMOR_DRY_RUN", "1")   # a shot never changes the TV or sound
 	_shoot.call_deferred()
 
 

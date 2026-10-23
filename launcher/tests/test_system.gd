@@ -1,6 +1,6 @@
 # The TV picture (xrandr) and sound (pactl) helpers, and the Picture keep or
 # undo flow in Settings (D79, D80). Commands go to a fake runner; the box's
-# own xrandr output is a fixture.
+# own xrandr output is a fixture. On Linux, run_command itself runs printf and ls.
 extends "res://tests/test_case.gd"
 
 const Display := preload("res://scripts/display.gd")
@@ -150,10 +150,11 @@ func test_parse_cards() -> void:
 	eq(c.name, "alsa_card.pci-0000_00_0e.0", "name")
 	eq(c.description, "Built-in Audio", "description")
 	eq(c.active, "output:analog-stereo+input:analog-stereo", "active profile")
-	eq(c.profiles.size(), 8, "profiles, not ports")
+	eq(c.profiles.size(), 9, "profiles, not ports")
 	eq(Sound.profile_description(c, "output:hdmi-stereo"), "Digital Stereo (HDMI) Output", "description keeps its brackets")
 	check(not c.profiles[3].available, "HDMI 1 has nothing on it")
-	eq(Sound.choose_profile(c), "output:hdmi-stereo-extra1", "the one socket with a TV")
+	check(not Sound.is_hdmi("output:hdmi-stereo-extra1+input:analog-stereo"), "a socket's duplex twin is not another socket")
+	eq(Sound.choose_profile(c), "output:hdmi-stereo-extra1", "the one socket with a TV, though its duplex twin is live too")
 	for p in c.profiles:
 		if p.name == "output:hdmi-stereo-extra1":
 			p.available = false
@@ -175,6 +176,13 @@ func test_sound_ensure_sets_hdmi_and_volume() -> void:
 	check(f.ran(["pactl", "set-sink-volume", sink, "100%"]), "volume 100%")
 	check(f.ran(["pactl", "set-sink-mute", sink, "0"]), "unmuted")
 	eq(r.playing, "Digital Stereo (HDMI 2) Output, Built-in Audio", "what Settings shows")
+	# Already on that socket's duplex profile: it plays through the TV, so it stays.
+	f = FakeRun.new()
+	f.replies["pactl list cards"] = {"code": 0, "out": _read("pactl/cards.txt").replace(
+		"Active Profile: output:analog-stereo+input:analog-stereo", "Active Profile: output:hdmi-stereo-extra1+input:analog-stereo")}
+	f.set_out("pactl list short sinks", FIX + "pactl/short_sinks_hdmi2.txt")
+	check(Sound.ensure("hdmi", -1, f.call_it).ok, "ok")
+	check(f.calls.all(func(c): return c[1] != "set-card-profile"), "profile left alone")
 
 
 func test_sound_waits_for_the_hdmi_sink() -> void:
@@ -246,6 +254,109 @@ func test_off_the_box_nothing_runs() -> void:
 	s.check()
 	eq(f.calls, [], "no commands")
 	s.free()
+
+
+func test_headless_runs_nothing() -> void:
+	# Tests and other headless runs never reach the real xrandr or pactl, even
+	# on a Linux desktop, so no test can start a real job before its fake runner.
+	var s: Node = SystemSetup.new()
+	if DisplayServer.get_name() == "headless":
+		check(not s.enabled, "off")
+	s.free()
+
+
+func test_a_waiting_check_stays_strict() -> void:
+	var f := FakeRun.new()
+	f.set_out("xrandr --verbose", FIX + "xrandr/box_verbose.txt")
+	f.set_out("xrandr --verbose --current", FIX + "xrandr/box_verbose.txt")
+	var s := _setup_node(f)
+	s._thread = Thread.new()          # stands in for a Wi-Fi scan on the worker
+	s.check()                         # the launcher came back
+	s.check(true)                     # then a check from the first 30 s
+	eq(s._queue.size(), 1, "one check waiting")
+	check(s._queue[0].probe, "and it reads the TV again")
+	s._thread = null
+	s._next()
+	check(f.ran(["xrandr", "--verbose"]), "strict")
+	check(not f.ran(["xrandr", "--verbose", "--current"]), "not only what X knows")
+	s.free()
+
+
+# run_command --------------------------------------------------------------------
+
+## Every line printed while it is added.
+class Lines extends Logger:
+	var lines: Array[String] = []
+	var _mutex := Mutex.new()
+
+	func _log_message(message: String, _error: bool) -> void:
+		_mutex.lock()
+		lines.append(message)
+		_mutex.unlock()
+
+	func text() -> String:
+		_mutex.lock()
+		var t := "".join(lines)
+		_mutex.unlock()
+		return t
+
+
+static func _set_dry_run(value: String) -> String:
+	var old := OS.get_environment("BOSCAMOR_DRY_RUN")
+	if value.is_empty():
+		OS.unset_environment("BOSCAMOR_DRY_RUN")
+	else:
+		OS.set_environment("BOSCAMOR_DRY_RUN", value)
+	return old
+
+
+func test_dry_run_logs_changes_and_hides_passwords() -> void:
+	var old := _set_dry_run("1")
+	var log_lines := Lines.new()
+	OS.add_logger(log_lines)
+	var r := SystemSetup.run_command(["nmcli", "--wait", "40", "device", "wifi", "connect", "Cafe", "password", "hunter22$"],
+		Tokens.WIFI_CONNECT_TIMEOUT, true)
+	SystemSetup.run_command(["nmcli", "connection", "modify", "id", "Old Flat", "wifi-sec.key-mgmt", "wpa-psk", "wifi-sec.psk", "newpass1"])
+	SystemSetup.run_command(["xrandr", "--output", "DP-1", "--mode", "0x4a"])
+	var p := SystemSetup.run_command(["printf", "ran"])
+	OS.remove_logger(log_lines)
+	_set_dry_run(old)
+	eq(r, {"code": 0, "out": ""}, "logged, not run")
+	eq(p.out, "", "nothing unknown runs either")
+	var text := log_lines.text()
+	check(text.contains("dry run: nmcli --wait 40 device wifi connect Cafe password (hidden)"), "says what it would run: %s" % text)
+	check(text.contains("dry run: xrandr --output DP-1 --mode 0x4a"), "picture changes too")
+	check(not text.contains("hunter22") and not text.contains("newpass1"), "never the password")
+	for argv in [["xrandr", "--verbose"], ["xrandr", "--verbose", "--current"], ["pactl", "list", "cards"],
+			["pactl", "list", "short", "sinks"], ["pactl", "info"],
+			["nmcli", "-t", "-f", "TYPE,STATE,CONNECTION", "device"],
+			["nmcli", "-t", "-f", "IN-USE,SIGNAL,SECURITY,SSID", "device", "wifi", "list", "--rescan", "yes"],
+			["nmcli", "-t", "-f", "NAME,TYPE", "connection", "show"]]:
+		check(SystemSetup.reads_only(argv), "a dry run still reads: %s" % [argv])
+	for argv in [["xrandr", "--output", "DP-1", "--auto"], ["xrandr", "--newmode", "x"], ["pactl", "set-sink-volume", "@DEFAULT_SINK@", "100%"],
+			["nmcli", "--wait", "40", "connection", "up", "id", "show"], ["nmcli", "--wait", "40", "device", "wifi", "connect", "list"]]:
+		check(not SystemSetup.reads_only(argv), "a change, whatever the network is called: %s" % [argv])
+
+
+func test_run_command_has_no_shell() -> void:
+	if OS.get_name() != "Linux":
+		return             # xrandr, pactl and nmcli only run on Linux
+	var old := _set_dry_run("")
+	var log_lines := Lines.new()
+	OS.add_logger(log_lines)
+	var odd := "a\"b $HOME `echo X` back\\slash \"; echo INJECTED; \" 'q' $(echo Y) hunter22"
+	var r := SystemSetup.run_command(["printf", "[%s]", odd])
+	var e := SystemSetup.run_command(["ls", "/boscamor-no-such-file"], Tokens.SETUP_CMD_TIMEOUT, true)
+	var quiet := SystemSetup.run_command(["ls", "/boscamor-no-such-file"])
+	var missing := SystemSetup.run_command(["boscamor-no-such-command"])
+	OS.remove_logger(log_lines)
+	_set_dry_run(old)
+	eq(r.code, 0, "ran")
+	eq(r.out, "[" + odd + "]", "every byte as given: no shell")
+	check(e.code != 0 and e.out.contains("No such file"), "stderr when asked: %s" % [e])
+	eq(quiet.out, "", "and not otherwise")
+	eq(missing.code, 127, "not found")
+	check(not log_lines.text().contains("hunter22"), "nothing logged it")
 
 
 # Settings: Picture, keep or undo ------------------------------------------------

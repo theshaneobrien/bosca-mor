@@ -54,8 +54,11 @@ static func parse_cards(text: String) -> Array:
 	return cards
 
 
+## Output-only HDMI profiles. Each socket's "+input:analog-stereo" twin plays
+## through the same socket, and counting it would make one socket look like two.
 static func is_hdmi(profile_name: String) -> bool:
-	return profile_name == HDMI or profile_name.begins_with(HDMI + "-extra")
+	return not profile_name.contains("+") \
+		and (profile_name == HDMI or profile_name.begins_with(HDMI + "-extra"))
 
 
 ## The first card with an HDMI output.

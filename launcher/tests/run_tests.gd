@@ -28,6 +28,9 @@ class ErrorCatcher extends Logger:
 
 
 func _initialize() -> void:
+	# Before any test starts: nothing here changes the machine (Law 12). The
+	# launcher's xrandr, pactl and nmcli changes are logged, not run.
+	OS.set_environment("BOSCAMOR_DRY_RUN", "1")
 	_run.call_deferred()
 
 

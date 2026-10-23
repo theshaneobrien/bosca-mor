@@ -11,6 +11,11 @@ const Display := preload("res://scripts/display.gd")
 const Sound := preload("res://scripts/sound.gd")
 const Network := preload("res://scripts/network.gd")
 
+## Bytes read from a command's output at a time.
+const _READ_CHUNK := 65536
+## The word before a password in nmcli's argv; the log hides what follows.
+const _SECRET_AFTER := ["password", "wifi-sec.psk"]
+
 ## A check finished; display and sound hold the latest results.
 signal changed
 ## A picture change from Settings finished: Display.ensure's result.
@@ -18,8 +23,10 @@ signal picture_done(result: Dictionary)
 ## Joining a Wi-Fi network finished: Network.join's result.
 signal wifi_done(result: Dictionary)
 
-## Linux with an X display. Off it (the dev machine) nothing runs.
-var enabled := OS.get_name() == "Linux" and not OS.get_environment("DISPLAY").is_empty()
+## Linux with an X display. Off it (the dev machine, and headless runs such
+## as the tests) nothing runs. BOSCAMOR_DRY_RUN=1 logs changes instead.
+var enabled := OS.get_name() == "Linux" and not OS.get_environment("DISPLAY").is_empty() \
+	and DisplayServer.get_name() != "headless"
 ## Tests run jobs on the calling thread with a fake runner.
 var threaded := true
 var run: Callable = run_command
@@ -85,7 +92,8 @@ func check(probe := false) -> void:
 		return
 	for j in _queue:
 		if j.kind == "check":
-			return             # one is already waiting
+			j.probe = j.probe or probe   # one is already waiting; a login check stays strict (D83)
+			return
 	_push({"kind": "check", "probe": probe})
 
 
@@ -234,10 +242,66 @@ func _log(what: String, r: Dictionary) -> void:
 
 
 ## xrandr, pactl or nmcli, with C-locale output and a time limit. Never a
-## shell. stderr: read it too (nmcli says why a join failed there).
+## shell (Law 3): OS.execute with an output array runs through /bin/sh on
+## Linux, which would change or run a Wi-Fi name or password, so the command
+## runs from execute_with_pipe. stderr: add it to out (nmcli says why a join
+## failed there). Waits for the command, so the worker thread only. Under
+## BOSCAMOR_DRY_RUN=1 a command that changes something is logged, not run.
 static func run_command(argv: Array, limit_s := Tokens.SETUP_CMD_TIMEOUT, stderr := false) -> Dictionary:
-	var out := []
+	if OS.get_environment("BOSCAMOR_DRY_RUN") == "1" and not reads_only(argv):
+		print("dry run: %s" % shown(argv))
+		return {"code": 0, "out": ""}
 	var args := PackedStringArray([str(limit_s), "env", "LC_ALL=C"])
 	args.append_array(PackedStringArray(argv))
-	var code := OS.execute("timeout", args, out, stderr)
-	return {"code": code, "out": "".join(out)}
+	var p := OS.execute_with_pipe("timeout", args, false)
+	if p.is_empty():
+		return {"code": -1, "out": ""}
+	var io: FileAccess = p.stdio
+	var err: FileAccess = p.stderr
+	var out := PackedByteArray()
+	var errs := PackedByteArray()
+	while true:
+		# Asked before reading, so whatever it wrote before it ended is read.
+		var running := OS.is_process_running(p.pid)
+		var a := io.get_buffer(_READ_CHUNK)
+		var b := err.get_buffer(_READ_CHUNK)
+		out.append_array(a)
+		errs.append_array(b)
+		if a.is_empty() and b.is_empty():
+			if not running:
+				break
+			OS.delay_msec(Tokens.SETUP_CMD_POLL_MS)
+	io.close()
+	err.close()
+	var text := out.get_string_from_utf8()
+	if stderr:
+		text += errs.get_string_from_utf8()
+	return {"code": OS.get_process_exit_code(p.pid), "out": text}
+
+
+## The commands that only read: xrandr --verbose [--current], pactl list and
+## info, and nmcli's terse device list, Wi-Fi list and saved connections. A
+## dry run still runs these.
+static func reads_only(argv: Array) -> bool:
+	if argv.is_empty():
+		return false
+	match argv[0]:
+		"xrandr":
+			return argv.slice(1).all(func(a): return a in ["--verbose", "--current"])
+		"pactl":
+			return argv.size() > 1 and argv[1] in ["list", "info"]
+		"nmcli":
+			if argv.size() < 5 or argv[1] != "-t" or argv[2] != "-f":
+				return false
+			var rest := argv.slice(4)
+			return rest == ["device"] or rest == ["connection", "show"] \
+				or rest.slice(0, 3) == ["device", "wifi", "list"]
+	return false
+
+
+## argv for the log, with any password hidden.
+static func shown(argv: Array) -> String:
+	var words := PackedStringArray()
+	for i in argv.size():
+		words.append("(hidden)" if i > 0 and argv[i - 1] in _SECRET_AFTER else str(argv[i]))
+	return " ".join(words)
