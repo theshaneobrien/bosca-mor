@@ -53,7 +53,9 @@ esac
     "usermod": r"""#!/usr/bin/env bash
 echo "$2" >> "$STUB_STATE/groups"
 """,
+    # Every package is installed, except the ones listed in $STUB_STATE/missing.
     "dpkg-query": r"""#!/usr/bin/env bash
+grep -qxF -- "${!#}" "$STUB_STATE/missing" 2>/dev/null && exit 1
 printf 'install ok installed'
 """,
     "getent": "#!/usr/bin/env bash\nexit 2\n",
@@ -99,6 +101,7 @@ cp "$src" "$out"
 case "$1" in
 	update) case " ${STUB_FAIL:-} " in *" apt-update "*) exit 100 ;; esac ;;
 	install)
+		case " ${STUB_FAIL:-} " in *" apt-install "*) exit 100 ;; esac
 		for a in "$@"; do
 			if [ "$a" = spotify-client ]; then printf '#!/bin/sh\n' > "$STUB_DIR/spotify"; chmod +x "$STUB_DIR/spotify"; fi
 		done ;;
@@ -172,14 +175,20 @@ class Scratch(unittest.TestCase):
         with open(path) as f:
             return f.read()
 
-    def run_script(self, script, *args, fail=""):
-        env = {
+    def run_script(self, script, *args, fail="", typed=None, env=None):
+        full = {
             "PATH": self.stubs + ":" + os.environ.get("PATH", "/usr/bin:/bin"),
             "HOME": self.home, "LANG": "C", "BOSCAMOR_ROOT": self.sys,
             "STUB_DIR": self.stubs, "STUB_STATE": self.state, "STUB_LOG": self.log, "STUB_FAIL": fail,
         }
-        return subprocess.run(["bash", os.path.join(self.repo, script), *args], env=env,
-                              stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=120)
+        full.update(env or {})
+        # typed: what the user types at the script's prompts, if anything.
+        stdin = {"input": typed} if typed is not None else {"stdin": subprocess.DEVNULL}
+        return subprocess.run(["bash", os.path.join(self.repo, script), *args], env=full,
+                              capture_output=True, text=True, timeout=120, **stdin)
+
+    def logged(self):
+        return self.read(self.log).splitlines() if os.path.exists(self.log) else []
 
 
 class TestInstaller(Scratch):
@@ -225,6 +234,26 @@ class TestInstaller(Scratch):
         self.assertIn("warning: apt update failed with Spotify's repository added", out)
         self.assertFalse(os.path.exists(self.sys_path("/etc/apt/sources.list.d/spotify.list")))
         self.assertFalse(os.path.exists(self.sys_path("/etc/apt/keyrings/spotify.gpg")))
+        self.assert_system_steps_done()
+
+    def test_failed_apt_update_still_installs_and_runs_the_system_steps(self):
+        # A broken third-party repository (Spotify's rotated key) fails the
+        # update in step 1 on a re-run that adds a package.
+        self.write(os.path.join(self.state, "missing"), "evtest\n")
+        self.write(self.sys_path("/etc/apt/trusted.gpg.d/spotify.gpg"), b"old key")
+        self.write(os.path.join(self.stubs, "spotify"), "#!/bin/sh\n", 0o755)
+        out = self.install(fail="apt-update")
+        self.assertIn("warning: apt update failed (a third-party repository?)", out)
+        self.assertIn("apt-get install -y evtest", self.logged())
+        self.assert_system_steps_done()
+        # Step 8's keyring move still ran.
+        self.assertTrue(os.path.isfile(self.sys_path("/etc/apt/keyrings/spotify.gpg")))
+        self.assertFalse(os.path.exists(self.sys_path("/etc/apt/trusted.gpg.d/spotify.gpg")))
+
+    def test_failed_package_install_warns_and_the_system_steps_still_run(self):
+        self.write(os.path.join(self.state, "missing"), "evtest\n")
+        out = self.install("--no-apps", fail="apt-install")
+        self.assertIn("warning: could not install evtest", out)
         self.assert_system_steps_done()
 
     def test_spotify_key_signs_only_spotify(self):
@@ -286,18 +315,28 @@ class TestInstaller(Scratch):
 
 
 class TestBootSplash(Scratch):
-    MINT = "/usr/share/plymouth/themes/mint-logo/mint-logo.plymouth"
-    BGRT = "/usr/share/plymouth/themes/bgrt/bgrt.plymouth"
-
     def setUp(self):
         super().setUp()
-        os.makedirs(os.path.join(self.sys, "usr/share/plymouth/themes"))
+        # Under the scratch root, where the script looks for themes.
+        themes = os.path.join(self.sys, "usr/share/plymouth/themes")
+        os.makedirs(themes)
+        self.MINT = os.path.join(themes, "mint-logo/mint-logo.plymouth")
+        self.BGRT = os.path.join(themes, "bgrt/bgrt.plymouth")
+        self.ours_dir = os.path.join(themes, "boscamor-splash")
+        self.ours = os.path.join(self.ours_dir, "boscamor-splash.plymouth")
         self.picture = os.path.join(self.tmp, "splash.png")
         self.write(self.picture, b"\x89PNG\r\n\x1a\n picture")
 
-    def alternatives(self, mode, value):
+    def alternatives(self, mode, value, **more):
         self.write(os.path.join(self.state, "alternatives.json"),
-                   json.dumps({"mode": mode, "value": value, "alts": {self.MINT: 100, self.BGRT: 110}}))
+                   json.dumps({"mode": mode, "value": value,
+                               "alts": {self.MINT: 100, self.BGRT: 110, **more}}))
+
+    def older_install(self, mode, value):
+        """The splash as the older script left it: ours a theme, no record."""
+        self.write(os.path.join(self.ours_dir, "splash.png"), b"\x89PNG\r\n\x1a\n old")
+        self.write(self.ours, "[Plymouth Theme]\n")
+        self.alternatives(mode, value, **{self.ours: 100})
 
     def splash(self, *args):
         p = self.run_script("tools/boot-splash.sh", *args)
@@ -308,17 +347,101 @@ class TestBootSplash(Scratch):
     def test_restore_brings_back_a_theme_chosen_by_hand(self):
         # Mint's ranks below bgrt here, so falling back to auto would pick bgrt.
         self.alternatives("manual", self.MINT)
-        ours = os.path.join(self.sys, "usr/share/plymouth/themes/boscamor-splash/boscamor-splash.plymouth")
-        self.assertEqual(self.splash(self.picture)["value"], ours)
+        self.assertEqual(self.splash(self.picture)["value"], self.ours)
         st = self.splash("--restore")
         self.assertEqual((st["mode"], st["value"]), ("manual", self.MINT))
-        self.assertNotIn(ours, st["alts"])
+        self.assertNotIn(self.ours, st["alts"])
 
     def test_restore_leaves_auto_mode_as_it_was(self):
         self.alternatives("auto", self.BGRT)
         self.splash(self.picture)
         st = self.splash("--restore")
         self.assertEqual((st["mode"], st["value"]), ("auto", self.BGRT))
+
+    def test_restore_after_the_older_script_picks_mint(self):
+        # Ours is the manual default with no record of what came before, and
+        # Mint's ranks below bgrt, so auto mode alone would end on bgrt.
+        self.older_install("manual", self.ours)
+        self.assertEqual(self.splash(self.picture)["value"], self.ours)
+        self.assertFalse(os.path.exists(os.path.join(self.ours_dir, "previous-theme")))
+        st = self.splash("--restore")
+        self.assertEqual((st["mode"], st["value"]), ("manual", self.MINT))
+        self.assertNotIn(self.ours, st["alts"])
+        self.assertFalse(os.path.exists(self.ours_dir))
+
+    def test_restore_with_no_record_keeps_a_theme_chosen_since(self):
+        # Ours is installed but someone chose bgrt by hand after: leave it.
+        self.older_install("manual", self.BGRT)
+        st = self.splash("--restore")
+        self.assertEqual((st["mode"], st["value"]), ("manual", self.BGRT))
+        self.assertNotIn(self.ours, st["alts"])
+
+
+class TestBoxReportKeys(Scratch):
+    """tools/box-report.sh --keys and the daemon service it pauses. The
+    capture itself (python3) and sleep are stand-ins; ps reports the daemon's
+    children from $STUB_STATE/children-<call>, else $STUB_STATE/children."""
+
+    STUBS = {
+        "systemctl": r"""#!/usr/bin/env bash
+printf 'systemctl %s\n' "$*" >> "$STUB_LOG"
+case " $* " in
+	*" is-active "*) exit 0 ;;
+	*" show "*) echo 4242 ;;
+esac
+""",
+        "ps": r"""#!/usr/bin/env bash
+printf 'ps %s\n' "$*" >> "$STUB_LOG"
+n=$(( $(cat "$STUB_STATE/ps-calls" 2>/dev/null || echo 0) + 1 ))
+echo "$n" > "$STUB_STATE/ps-calls"
+f="$STUB_STATE/children-$n"
+[ -f "$f" ] || f="$STUB_STATE/children"
+[ -f "$f" ] && cat "$f"
+exit 0
+""",
+        "python3": "#!/usr/bin/env bash\necho capture >> \"$STUB_LOG\"\n",
+        "sleep": "#!/usr/bin/env bash\nexit 0\n",
+    }
+
+    def setUp(self):
+        super().setUp()
+        for name, text in self.STUBS.items():
+            self.write(os.path.join(self.stubs, name), text, 0o755)
+
+    def keys(self, typed="\n"):
+        p = self.run_script("tools/box-report.sh", "--keys", typed=typed,
+                            env={"BOX_REPORT_DIR": os.path.join(self.tmp, "report")})
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertIn("capture", self.logged())
+        return p.stdout
+
+    def test_no_app_open_pauses_the_service(self):
+        # A zombie and a helper the daemon runs for a moment are not apps.
+        self.write(os.path.join(self.state, "children"), "Z    spotify\nS    wmctrl\n")
+        out = self.keys()
+        self.assertNotIn("Press Home", out)
+        log = self.logged()
+        self.assertIn("ps --ppid 4242 -o stat=,comm=", log)
+        stop = log.index("systemctl --user stop boscamor-input.service")
+        self.assertLess(stop, log.index("capture"))
+        self.assertLess(log.index("capture"), log.index("systemctl --user start boscamor-input.service"))
+
+    def test_an_open_app_is_closed_first(self):
+        # A flatpak app: its bwrap is the daemon's child. Home closes it.
+        self.write(os.path.join(self.state, "children-1"), "Sl   bwrap\n")
+        out = self.keys()
+        self.assertIn("Press Home on the remote to close it, then press Enter here.", out)
+        log = self.logged()
+        self.assertLess(log.index("systemctl --user stop boscamor-input.service"), log.index("capture"))
+
+    def test_an_app_still_open_keeps_the_service_running(self):
+        self.write(os.path.join(self.state, "children"), "Sl   firefox\n")
+        out = self.keys()
+        self.assertIn("Press Home on the remote to close it", out)
+        self.assertIn("The app is still open", out)
+        log = self.logged()
+        self.assertNotIn("systemctl --user stop boscamor-input.service", log)
+        self.assertNotIn("systemctl --user start boscamor-input.service", log)
 
 
 if __name__ == "__main__":
