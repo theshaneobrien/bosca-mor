@@ -11,13 +11,17 @@ config_version=5
 [application]
 
 config/name="Launcher"
-config/version="0.12.0"
+config/version="0.12.1"
 run/main_scene="res://scenes/main.tscn"
 config/features=PackedStringArray("4.7", "GL Compatibility")
 run/low_processor_mode=true
 boot_splash/show_image=false
 boot_splash/bg_color=Color(0.0470588, 0.0470588, 0.0784314, 1)
 run/flush_stdout_on_print=true
+
+[audio]
+
+driver/driver="Dummy"
 
 [autoload]
 

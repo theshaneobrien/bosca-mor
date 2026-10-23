@@ -18,7 +18,7 @@ const STATES := ["home", "menu", "power", "restart", "settings", "osk", "stillop
 const FIX := "res://tests/fixtures/"
 # What xrandr, pactl and nmcli say, from the test fixtures.
 const FAKE := {
-	"xrandr --query": "xrandr/box.txt", "xrandr --current": "xrandr/box.txt",
+	"xrandr --verbose": "xrandr/box_verbose.txt", "xrandr --verbose --current": "xrandr/box_verbose.txt",
 	"pactl list cards": "pactl/cards.txt", "pactl list short sinks": "pactl/short_sinks_hdmi2.txt",
 	"pactl info": "pactl/info.txt",
 	"nmcli -t -f TYPE,STATE,CONNECTION device": "nmcli/devices.txt",

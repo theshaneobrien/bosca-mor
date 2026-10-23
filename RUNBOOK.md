@@ -19,6 +19,7 @@
 | Fix: first box test | done | Full screen by default; Settings from the sidebar closes it; no daemon on Linux shows a toast; launch waits black for the app window, Desktop fades first (D65 to D68); installer starts the daemon from autostart and adds a menu entry. 121 launcher tests, 59 daemon tests |
 | Fix: second box test | done | No splash; hover selects tiles; the launcher stays black behind apps and the daemon hands them the focus (D69); Return waits for save prompts (D70); minimise effect off (D71); Add app is Flatpaks and websites (D72); Remove (D73). 129 launcher tests, 65 daemon tests |
 | Loading screen | done | "Opening <name>" with the tile and pulsing dots on the black while an app starts, from 0.5 s, at up to 30 fps (D76). 132 launcher tests |
+| Fix: boot picture and idle CPU | done | The boot picture is set to the exact CEA 1080p60 timing by id from `xrandr --verbose`, and every login check is logged (D83); no audio driver and a 60 Hz idle loop (D84); box-report key capture fixed (it read stdin, which was the program), plus the launcher's log, `xrandr --verbose`, kernel display messages and CPU per thread. 160 launcher tests, 70 daemon tests. Release v0.12.1 |
 | Fix: third box test | done | App windows wait 2 s more behind the black (D77); the daemon focuses the launcher at login (D78); picture set to 1080p60 with xrandr and a Picture choice with keep or undo (D79); HDMI sound and start volume with pactl (D80); Wi-Fi list and join with nmcli (D81); OK keys X can't see passed on as Accept (D82). 157 launcher tests, 70 daemon tests. Release v0.12.0 |
 
 ## Rebuilding the launcher
@@ -95,6 +96,13 @@ What the first box report confirmed: Mint 22.3, X11, Python 3.12, 1920x1080 at 6
 - [ ] Open a slow app (Jellyfin, Spotify, RetroArch): after the fade the loading screen shows its tile, "Opening <name>" and pulsing dots, until the app appears. Plex may open before it shows at all (D76).
 - [ ] If you install the boot splash: the picture shows centred on dark blue at start and at shut down. The Plymouth script couldn't be run on the dev machine, so if the screen stays plain dark blue or shows text, run `--restore` and tell the next session (D75).
 - [ ] Settings > Apps > Add app lists only Flatpaks, plus "A website"; add one website (name with a space, then its address) and open it; then remove it with Remove (D72, D73).
+
+**Third box report, 23 Oct 2026 (v0.12.0).** At boot the TV flickered at a wrong-looking mode until the cable was replugged. The report was taken after the replug, so it shows the good state only: DP-1 at 1920x1080, the second of two 60.00 Hz timings. The launcher used 25% of a core idle on Home and 15% behind an app (budgets 1% and 0.5%). The key capture skipped every button by itself (fixed). HDMI sound was right: `output:hdmi-stereo+input:analog-stereo` on Built-in Audio, LG TV on `hdmi-output-0`. The minimise effect is now `none`; still no `~/install.log`. To check with v0.12.1:
+
+- [ ] Cold boot: does the picture come up right with no replug? Either way, run `tools/box-report.sh --all` afterwards: the "Launcher picture, sound and Wi-Fi lines" section now has what the screen was on at login and what the launcher did, even after a replug (D83).
+- [ ] If it still flickers: before replugging, from another machine run `ssh tv@<box> 'DISPLAY=:0 xrandr --verbose' > bad-screen.txt` and send that with the report.
+- [ ] The key capture asks for each button and records it (it skipped everything before). Press OK with the air mouse on, then off, when asked.
+- [ ] Budgets: the launcher idle on Home and behind an app, and the new per-thread lines (D84).
 
 **Third box test, 23 Oct 2026 (v0.11.3).** The daemon worked; the remote mostly did. The report showed Cinnamon's minimise effect still `traditional` and no `~/install.log`, so the installer may not have finished. Fixed since, to check with v0.12.0:
 

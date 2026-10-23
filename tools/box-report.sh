@@ -66,7 +66,9 @@ report() {
 	section "Cinnamon" cinnamon --version
 	section "Session type (want x11)" printenv XDG_SESSION_TYPE XDG_CURRENT_DESKTOP DISPLAY
 	section "Screen" xrandr --current
-	section "Screen, read again from the TV" xrandr --query
+	section "Screen, every timing (xrandr --verbose)" xrandr --verbose
+	section "Kernel display messages, this boot" sh -c 'journalctl -k -b 0 --no-pager -o short-monotonic | grep -i -E "i915|drm|hdmi|dp-|link" | tail -n 80'
+	section "Kernel display messages, last boot" sh -c 'journalctl -k -b -1 --no-pager -o short-monotonic | grep -i -E "i915|drm|hdmi|dp-|link" | tail -n 80'
 	section "Python (daemon needs 3)" python3 --version
 
 	echo "  tools the launcher uses"
@@ -123,7 +125,10 @@ report() {
 	section "Sound server" pactl info
 	section "Sound cards" pactl list cards
 	section "Sound outputs" pactl list short sinks
-	section "Launcher picture, sound and Wi-Fi log" sh -c 'grep -h -E "^(picture|sound|wifi): " "$HOME/.xsession-errors" | tail -n 40'
+	# Godot's own log: user://logs, kept for the last few logins.
+	section "Launcher logs" ls -la "$REAL_HOME/.local/share/godot/app_userdata/Launcher/logs"
+	section "Launcher picture, sound and Wi-Fi lines, by login" sh -c 'cd "$1" && grep -H -E "^(picture|sound|wifi): " $(ls -tr godot*.log) | tail -n 80' sh "$REAL_HOME/.local/share/godot/app_userdata/Launcher/logs"
+	section "Launcher log, this login" tail -n 120 "$REAL_HOME/.local/share/godot/app_userdata/Launcher/logs/godot.log"
 	section "Hostname" cat /etc/hostname
 
 	echo "  open windows (xprop fixtures for Return to the launcher)"
@@ -204,6 +209,9 @@ def drain(secs):
             except OSError:
                 pass
 
+# The program came in on stdin (this heredoc), so the keyboard is /dev/tty.
+tty = open("/dev/tty")
+
 out = open(sys.argv[1], "w")
 out.write("prompt | device | code | name | scancode\n")
 for prompt in PROMPTS:
@@ -214,9 +222,9 @@ for prompt in PROMPTS:
     scan = None
     scan_only = []      # a button the kernel has no key for sends only its scancode
     while time.time() < end and not got:
-        r, _, _ = select.select(list(fds) + [sys.stdin], [], [], 0.5)
-        if sys.stdin in r:
-            sys.stdin.readline()
+        r, _, _ = select.select(list(fds) + [tty], [], [], 0.5)
+        if tty in r:
+            tty.readline()
             break
         for fd in r:
             try:
@@ -254,7 +262,8 @@ for prompt in PROMPTS:
 # Air mouse: how far the pointer drifts when the remote is only held.
 for prompt in ["Hold the remote still in your hand, as if watching TV, for 5 s",
                "Press the D-pad a few times, the way you would to move along the tiles, for 5 s"]:
-    input("\n  " + prompt + ". Press Enter on a keyboard to start.")
+    print("\n  " + prompt + ". Press Enter on a keyboard to start.", end=" ", flush=True)
+    tty.readline()
     drain(0.2)
     dx = dy = 0
     peak = 0
@@ -283,6 +292,27 @@ PY
 
 # Budgets ------------------------------------------------------------------------------
 
+# CPU ticks (1/100 s) and voluntary wakeups per thread of one process over 10 s.
+threads() {
+	local pid="$1" t id c w
+	declare -A c0 w0
+	for t in /proc/"$pid"/task/*; do
+		id="${t##*/}"
+		c0[$id]=$(awk '{print $14 + $15}' "$t/stat")
+		w0[$id]=$(awk '/^voluntary_ctxt_switches/{print $2}' "$t/status")
+	done
+	sleep 10
+	for t in /proc/"$pid"/task/*; do
+		id="${t##*/}"
+		[ -n "${c0[$id]:-}" ] || continue
+		c=$(( $(awk '{print $14 + $15}' "$t/stat") - c0[$id] ))
+		w=$(( ($(awk '/^voluntary_ctxt_switches/{print $2}' "$t/status") - w0[$id]) / 10 ))
+		[ "$c" -gt 0 ] || [ "$w" -gt 20 ] || continue
+		printf "%-8s %-18s %5s ticks %6s/s  %s syscall %s\n" "$id" "$(cat "$t/comm")" "$c" "$w" \
+			"$(cat "$t/wchan" 2>/dev/null)" "$(cut -d" " -f1 "$t/syscall" 2>/dev/null)"
+	done
+}
+
 budgets() {
 	echo
 	echo "Budgets (SPEC Resource use). Needs pidstat (sysstat) and the launcher and daemon running."
@@ -304,6 +334,15 @@ budgets() {
 		pidstat -u -r -p "$launcher,$daemon" 5 12
 		echo "===== RSS (kB)"
 		ps -o pid,rss,comm -p "$launcher,$daemon"
+	} | tee -a "$file"
+	{
+		echo "===== Launcher threads, 10 s (behind the app): CPU ticks, wakeups a second, where it waits"
+		threads "$launcher"
+	} | tee -a "$file"
+	read -r -p "  Press Home to come back to the launcher, leave it idle, then press Enter. " _
+	{
+		echo "===== Launcher threads, 10 s (Home, idle)"
+		threads "$launcher"
 	} | tee -a "$file"
 	echo "  For the GPU, run this yourself while Home is idle and keep its output:"
 	echo "    sudo timeout 15 intel_gpu_top -o - > $OUT/gpu-idle.txt"

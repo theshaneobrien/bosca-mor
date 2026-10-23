@@ -63,6 +63,8 @@ var _picture_timer: Timer
 
 
 func _ready() -> void:
+	# Idle Home wakes 60 times a second, not 145 (D84).
+	OS.low_processor_usage_mode_sleep_usec = Tokens.SHOWN_SLEEP_USEC
 	set_anchors_preset(PRESET_FULL_RECT)
 	mouse_filter = MOUSE_FILTER_IGNORE
 	if apps_path.is_empty():

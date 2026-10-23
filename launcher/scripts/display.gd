@@ -4,6 +4,11 @@
 # itself. When the TV's mode list didn't come through the adapter, it adds
 # the standard CEA timing, and if 1920 x 1080 still fails it falls back to
 # 1280 x 720 at 60 Hz.
+#
+# The box's TV lists two different 1920x1080 modes at 60.00 Hz, and
+# `xrandr --mode 1920x1080 --rate 60` takes the first. So the mode is chosen
+# from xrandr --verbose by its exact timing, the CEA one first, and set by
+# its id (D83).
 extends RefCounted
 
 ## The Picture choices in Settings, in the order Accept steps through them.
@@ -15,30 +20,61 @@ const CEA := {
 	"1920x1080@60": ["148.50", "1920", "2008", "2052", "2200", "1080", "1084", "1089", "1125", "+hsync", "+vsync"],
 	"1280x720@60": ["74.25", "1280", "1390", "1430", "1650", "720", "725", "730", "750", "+hsync", "+vsync"],
 }
+## The CEA timings as xrandr --verbose shows them: MHz, h total, v total.
+const CEA_TOTALS := {"1920x1080@60": [148.5, 2200, 1125], "1280x720@60": [74.25, 1650, 750]}
 ## Built-in panels, never the TV.
 const INTERNAL := ["eDP", "LVDS", "DSI"]
 const RATE_MATCH := 0.5          # Hz: 59.94 and 60.00 both count as 60
 
 
-## xrandr --query (or --current) as a list of outputs:
-## [{name, connected, primary, current: {w, h, hz} or {}, modes: [{name, w, h, rates}]}]
-## where rates are the strings xrandr printed ("60.00").
+## xrandr --query, --current or --verbose as a list of outputs:
+## [{name, connected, primary, current: {w, h, hz, id?} or {}, modes: [mode]}]
+## A mode is {name, w, h, rates} where rates are the strings xrandr printed
+## ("60.00"). From --verbose each mode is one timing, and also has id, mhz,
+## htotal, vtotal and current.
 static func parse(text: String) -> Array:
 	var size_re := RegEx.create_from_string("^(\\d+)x(\\d+)(i?)")
+	var verbose_re := RegEx.create_from_string("^\\s+(\\S+)\\s+\\((0x[0-9a-fA-F]+)\\)\\s+([\\d.]+)MHz(.*)$")
+	var total_re := RegEx.create_from_string("^\\s+([hv]):.*\\stotal\\s+(\\d+).*clock\\s+([\\d.]+)")
 	var outs: Array = []
 	var cur := {}
+	var last := {}            # the --verbose mode its h: and v: lines belong to
 	for line in text.split("\n"):
 		if line.strip_edges().is_empty() or line.begins_with("Screen "):
 			continue
 		if not (line.begins_with(" ") or line.begins_with("\t")):
 			var head := line.split(" ", false)
 			cur = {}
+			last = {}
 			if head.size() >= 2 and head[1] in ["connected", "disconnected", "unknown"]:
 				cur = {"name": head[0], "connected": head[1] == "connected",
 					"primary": head.has("primary"), "current": {}, "modes": []}
 				outs.append(cur)
 			continue
-		if cur.is_empty():
+		if cur.is_empty() or line.begins_with("\t"):
+			continue          # --verbose properties and EDID
+		var vm := verbose_re.search(line)
+		if vm:
+			last = {}
+			var sm := size_re.search(vm.get_string(1))
+			if sm == null or vm.get_string(4).contains("Interlace"):
+				continue
+			last = {"name": vm.get_string(1), "id": vm.get_string(2), "mhz": vm.get_string(3).to_float(),
+				"w": sm.get_string(1).to_int(), "h": sm.get_string(2).to_int(), "rates": [],
+				"htotal": 0, "vtotal": 0, "current": vm.get_string(4).contains("*current")}
+			cur.modes.append(last)
+			continue
+		var tm := total_re.search(line)
+		if tm:
+			if last.is_empty():
+				continue
+			if tm.get_string(1) == "h":
+				last.htotal = tm.get_string(2).to_int()
+			else:
+				last.vtotal = tm.get_string(2).to_int()
+				last.rates.append("%.2f" % tm.get_string(3).to_float())
+				if last.current:
+					cur.current = {"w": last.w, "h": last.h, "hz": tm.get_string(3).to_float(), "id": last.id}
 			continue
 		var f := line.strip_edges().split(" ", false)
 		var m := size_re.search(f[0])
@@ -101,25 +137,49 @@ static func is_mode(current: Dictionary, mode: String) -> bool:
 		and current.h == m.h and absf(current.hz - m.hz) < RATE_MATCH
 
 
-## The xrandr commands that put the output on mode, or [] if it already is.
-## "auto" hands it back to the TV's preferred mode.
-static func plan(out: Dictionary, mode: String) -> Array:
-	var o: String = out.name
-	if mode == "auto":
-		return [["xrandr", "--output", o, "--auto"]]
-	if is_mode(out.current, mode):
-		return []
+## The mode in the TV's list to use for mode: from --verbose the one with
+## the CEA timing, else the nearest rate. {name, rate, cea, id (--verbose)},
+## or {} if the list has none.
+static func choose(out: Dictionary, mode: String) -> Dictionary:
 	var m := split(mode)
+	var cea: Array = CEA_TOTALS.get(mode, [])
 	var best := {}
 	var gap := RATE_MATCH
 	for entry in out.modes:
 		if entry.w != m.w or entry.h != m.h:
 			continue
+		var is_cea: bool = entry.has("id") and cea.size() == 3 and absf(entry.mhz - cea[0]) < 0.01 \
+			and entry.htotal == cea[1] and entry.vtotal == cea[2]
 		for r in entry.rates:
 			var d := absf(r.to_float() - m.hz)
-			if d < gap:
-				gap = d
-				best = {"name": entry.name, "rate": r}
+			if best.get("cea", false) or not (is_cea or d < gap):
+				continue
+			gap = d
+			best = {"name": entry.name, "rate": r, "cea": is_cea}
+			if entry.has("id"):
+				best.id = entry.id
+	return best
+
+
+## The xrandr commands that put the output on mode, or [] if it already is.
+## "auto" hands it back to the TV's preferred mode. strict: the current mode
+## counts only if it is the chosen timing itself (login and Settings);
+## otherwise any timing of that size and rate will do, so a picture that
+## works after a replug is left alone (D83).
+static func plan(out: Dictionary, mode: String, strict := true) -> Array:
+	var o: String = out.name
+	if mode == "auto":
+		return [["xrandr", "--output", o, "--auto"]]
+	if not strict and is_mode(out.current, mode):
+		return []
+	var best := choose(out, mode)
+	if best.has("id"):
+		if out.current.get("id", "") == best.id:
+			return []
+		return [["xrandr", "--output", o, "--mode", best.id]]
+	if is_mode(out.current, mode):
+		return []
+	var m := split(mode)
 	if best:
 		return [["xrandr", "--output", o, "--mode", best.name, "--rate", best.rate]]
 	# Not in the TV's list: add the CEA timing under its own name.
@@ -130,24 +190,47 @@ static func plan(out: Dictionary, mode: String) -> Array:
 
 
 ## Puts the TV on mode, falling back to 1280 x 720 if 1920 x 1080 fails.
-## run(argv) -> {code, out}. probe: --query reads the TV again; --current is
-## what X already knows, and quicker.
-## Returns {ok, output, mode, changed, fallback, error}.
+## run(argv) -> {code, out}. probe: read the TV again (xrandr --verbose);
+## otherwise what X already knows (--verbose --current), which is quicker.
+## Returns {ok, output, mode, changed, fallback, error}, plus was, modes and
+## steps for the log.
 static func ensure(mode: String, run: Callable, probe := true) -> Dictionary:
-	var q: Dictionary = run.call(["xrandr", "--query" if probe else "--current"])
+	var q: Dictionary = run.call(["xrandr", "--verbose"] if probe else ["xrandr", "--verbose", "--current"])
 	if q.code != 0:
 		return {"ok": false, "error": "xrandr did not run"}
 	var out := pick_output(parse(q.out))
 	if out.is_empty():
 		return {"ok": false, "error": "no screen found"}
+	var notes := {"output": out.name, "was": timing(out, out.current.get("id", "")), "modes": timings(out, mode)}
 	var tries := [mode] if mode == FALLBACK or mode == "auto" else [mode, FALLBACK]
 	for want in tries:
-		var steps := plan(out, want)
-		if steps.is_empty():
-			return {"ok": true, "output": out.name, "mode": want, "changed": false, "fallback": want != mode}
-		if _run_all(steps, run):
-			return {"ok": true, "output": out.name, "mode": want, "changed": true, "fallback": want != mode}
-	return {"ok": false, "output": out.name, "error": "the screen did not take it"}
+		var steps := plan(out, want, probe)
+		if steps.is_empty() or _run_all(steps, run):
+			var r := {"ok": true, "mode": want, "changed": not steps.is_empty(), "fallback": want != mode, "steps": steps}
+			r.merge(notes)
+			return r
+	notes.merge({"ok": false, "error": "the screen did not take it"})
+	return notes
+
+
+## "1920x1080 0x4a 148.50 MHz 2200x1125 60.00 Hz", for the log.
+static func timing(out: Dictionary, id: String) -> String:
+	for m in out.modes:
+		if id and m.get("id", "") == id:
+			return "%s %s %.2f MHz %dx%d %s Hz" % [m.name, m.id, m.mhz, m.htotal, m.vtotal, m.rates[0] if m.rates else "?"]
+	if out.current:
+		return "%dx%d %.2f Hz" % [out.current.w, out.current.h, out.current.hz]
+	return "off"
+
+
+## Every timing in the TV's list at mode's size, for the log.
+static func timings(out: Dictionary, mode: String) -> Array:
+	var m := split(mode if mode != "auto" else "1920x1080@60")
+	var list := []
+	for entry in out.modes:
+		if entry.w == m.w and entry.h == m.h and entry.has("id"):
+			list.append(timing(out, entry.id))
+	return list
 
 
 static func _run_all(steps: Array, run: Callable) -> bool:

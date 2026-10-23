@@ -68,7 +68,7 @@ func _check_hidden(when: String) -> void:
 func _check_shown(when: String) -> void:
 	check(not main.is_hidden, when + ": shown")
 	check(not tree.paused, when + ": tree running")
-	check(OS.low_processor_usage_mode_sleep_usec != Tokens.HIDDEN_SLEEP_USEC, when + ": short sleep again")
+	eq(OS.low_processor_usage_mode_sleep_usec, Tokens.SHOWN_SLEEP_USEC, when + ": 60 Hz sleep again (D84)")
 
 
 func test_launch_hides_then_app_exit_shows() -> void:

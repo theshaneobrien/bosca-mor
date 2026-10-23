@@ -256,6 +256,7 @@ const HOVER_DWELL := 0.120
 # Resource use (SPEC)
 const WIFI_POLL := 30.0
 const HIDDEN_SLEEP_USEC := 100000   # low processor sleep while hidden: about 10 wakeups a second
+const SHOWN_SLEEP_USEC := 16666     # D84: and while shown, one 60 Hz frame (Godot's default is 6900)
 
 # Fonts. DM Sans comes as static optical-size instances (24pt and 40pt):
 # MSDF can't draw the variable font's overlapping contours cleanly.

@@ -1,0 +1,55 @@
+Screen 0: minimum 320 x 200, current 1920 x 1080, maximum 16384 x 16384
+DP-1 connected primary 1920x1080+0+0 (0x50) normal (normal left inverted right x axis y axis) 1600mm x 900mm
+	Identifier: 0x42
+	Timestamp:  12345
+	Subpixel:   unknown
+	Gamma:      1.0:1.0:1.0
+	Brightness: 1.0
+	Clones:    
+	CRTC:       0
+	CRTCs:      0 1 2
+	Transform:  1.000000 0.000000 0.000000
+	            0.000000 1.000000 0.000000
+	            0.000000 0.000000 1.000000
+	           filter: 
+	EDID: 
+		00ffffffffffff001e6d000000000000
+	link-status: Good 
+		supported: Good, Bad
+  3840x2160 (0x48) 594.000MHz +HSync +VSync +preferred
+        h: width  3840 start 4016 end 4104 total 4400 skew    0 clock 135.00KHz
+        v: height 2160 start 2168 end 2178 total 2250           clock  60.00Hz
+  3840x2160 (0x49) 297.000MHz +HSync +VSync
+        h: width  3840 start 4016 end 4104 total 4400 skew    0 clock  67.50KHz
+        v: height 2160 start 2168 end 2178 total 2250           clock  30.00Hz
+  2560x1440 (0x4c) 497.750MHz +HSync -VSync
+        h: width  2560 start 2608 end 2640 total 2720 skew    0 clock 183.00KHz
+        v: height 1440 start 1443 end 1448 total 1525           clock 120.00Hz
+  1920x1080 (0x4d) 297.000MHz +HSync +VSync
+        h: width  1920 start 2008 end 2052 total 2200 skew    0 clock 135.00KHz
+        v: height 1080 start 1084 end 1089 total 1125           clock 120.00Hz
+  1920x1080 (0x50) 133.320MHz +HSync -VSync *current
+        h: width  1920 start 1968 end 2000 total 2000 skew    0 clock  66.66KHz
+        v: height 1080 start 1083 end 1088 total 1111           clock  60.00Hz
+  1920x1080 (0x4a) 148.500MHz +HSync +VSync
+        h: width  1920 start 2008 end 2052 total 2200 skew    0 clock  67.50KHz
+        v: height 1080 start 1084 end 1089 total 1125           clock  60.00Hz
+  1920x1080 (0x51) 148.352MHz +HSync +VSync
+        h: width  1920 start 2008 end 2052 total 2200 skew    0 clock  67.43KHz
+        v: height 1080 start 1084 end 1089 total 1125           clock  59.94Hz
+  1920x1080i (0x52) 74.250MHz +HSync +VSync Interlace
+        h: width  1920 start 2008 end 2052 total 2200 skew    0 clock  33.75KHz
+        v: height 1080 start 1084 end 1094 total 1125           clock  60.00Hz
+  1280x720 (0x55) 74.250MHz +HSync +VSync
+        h: width  1280 start 1390 end 1430 total 1650 skew    0 clock  45.00KHz
+        v: height  720 start  725 end  730 total  750           clock  60.00Hz
+  1280x720 (0x56) 74.176MHz +HSync +VSync
+        h: width  1280 start 1390 end 1430 total 1650 skew    0 clock  44.96KHz
+        v: height  720 start  725 end  730 total  750           clock  59.94Hz
+  1024x768 (0x5a) 65.000MHz -HSync -VSync
+        h: width  1024 start 1048 end 1184 total 1344 skew    0 clock  48.36KHz
+        v: height  768 start  771 end  777 total  806           clock  60.00Hz
+HDMI-1 disconnected (normal left inverted right x axis y axis)
+	Identifier: 0x43
+DP-2 disconnected (normal left inverted right x axis y axis)
+	Identifier: 0x44

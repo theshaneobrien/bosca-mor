@@ -58,6 +58,46 @@ func test_parse_the_box() -> void:
 	eq(o.modes[0].rates[0], "60.00", "a lone + is not a rate")
 
 
+func test_parse_verbose() -> void:
+	var o := Display.pick_output(Display.parse(_read("xrandr/box_verbose.txt")))
+	eq(o.name, "DP-1", "the TV")
+	eq(o.current, {"w": 1920, "h": 1080, "hz": 60.0, "id": "0x4a"}, "current, with its id")
+	var ids: Array = o.modes.map(func(m): return m.id)
+	check(not ids.has("0x52"), "interlaced left out")
+	var sixty: Array = o.modes.filter(func(m): return m.w == 1920 and m.rates == ["60.00"])
+	eq(sixty.map(func(m): return m.id), ["0x50", "0x4a"], "two timings at 60.00 Hz, as on the box")
+	eq(sixty[1].htotal, 2200, "h total")
+	eq(sixty[1].vtotal, 1125, "v total")
+	eq(Display.choose(o, "1920x1080@60"), {"name": "1920x1080", "rate": "60.00", "cea": true, "id": "0x4a"}, "the CEA one, not the first")
+	eq(Display.plan(o, "1920x1080@60"), [], "already on it")
+	eq(Display.plan(o, "1280x720@60"), [["xrandr", "--output", "DP-1", "--mode", "0x55"]], "720p by id, not 59.94")
+	eq(Display.timing(o, "0x4a"), "1920x1080 0x4a 148.50 MHz 2200x1125 60.00 Hz", "for the log")
+	eq(Display.timings(o, "1920x1080@60").size(), 4, "every 1080p timing in the log")
+
+
+func test_right_size_and_rate_but_the_other_timing() -> void:
+	# What the third box test may have been: 1080p at 60 Hz as far as X is
+	# concerned, but not the timing the TV takes (D83).
+	var o := Display.pick_output(Display.parse(_read("xrandr/box_verbose_rb.txt")))
+	eq(o.current.id, "0x50", "on the other 60.00 Hz timing")
+	eq(Display.plan(o, "1920x1080@60"), [["xrandr", "--output", "DP-1", "--mode", "0x4a"]], "moved to the CEA one")
+	eq(Display.plan(o, "1920x1080@60", false), [], "but not when the launcher comes back: it may be working after a replug")
+	o = Display.pick_output(Display.parse(_read("xrandr/box_verbose_uhd.txt")))
+	eq(Display.plan(o, "1920x1080@60"), [["xrandr", "--output", "DP-1", "--mode", "0x4a"]], "from 4K too")
+
+
+func test_ensure_logs_what_it_saw() -> void:
+	var f := FakeRun.new()
+	f.set_out("xrandr --verbose", FIX + "xrandr/box_verbose_rb.txt")
+	f.set_out("xrandr --verbose --current", FIX + "xrandr/box_verbose_rb.txt")
+	check(not Display.ensure("1920x1080@60", f.call_it, false).changed, "coming back: left alone")
+	var r := Display.ensure("1920x1080@60", f.call_it, true)
+	check(r.ok and r.changed, "changed")
+	eq(r.was, "1920x1080 0x50 133.32 MHz 2000x1111 60.00 Hz", "what it was on")
+	eq(r.steps, [["xrandr", "--output", "DP-1", "--mode", "0x4a"]], "what it ran")
+	check(r.modes.size() == 4, "the list it chose from")
+
+
 func test_wrong_mode_at_boot() -> void:
 	var o := Display.pick_output(Display.parse(_read("xrandr/uhd.txt")))
 	eq(o.current.hz, 30.0, "4K at 30 Hz")
@@ -76,7 +116,7 @@ func test_no_mode_list_adds_the_cea_timing() -> void:
 
 func test_ensure_falls_back_to_720p() -> void:
 	var f := FakeRun.new()
-	f.set_out("xrandr --query", FIX + "xrandr/no_edid.txt")
+	f.set_out("xrandr --verbose", FIX + "xrandr/no_edid.txt")
 	f.fail["xrandr --output DP-1 --mode 1920x1080_60"] = 1
 	f.fail["xrandr --newmode 1280x720_60 " + " ".join(Display.CEA["1280x720@60"])] = 1   # made earlier: carry on
 	var r := Display.ensure("1920x1080@60", f.call_it)
@@ -88,11 +128,11 @@ func test_ensure_falls_back_to_720p() -> void:
 
 func test_ensure_without_a_screen() -> void:
 	var f := FakeRun.new()
-	f.replies["xrandr --current"] = {"code": 0, "out": "Screen 0: minimum 320 x 200\nHDMI-1 disconnected (normal)\n"}
+	f.replies["xrandr --verbose --current"] = {"code": 0, "out": "Screen 0: minimum 320 x 200\nHDMI-1 disconnected (normal)\n"}
 	var r := Display.ensure("1920x1080@60", f.call_it, false)
 	check(not r.ok, "nothing to set")
 	eq(r.error, "no screen found", "said why")
-	f.fail["xrandr --query"] = 127
+	f.fail["xrandr --verbose"] = 127
 	check(not Display.ensure("1920x1080@60", f.call_it).ok, "no xrandr")
 
 
@@ -170,18 +210,18 @@ func _setup_node(f: FakeRun) -> Node:
 
 func test_login_checks_and_volume_once() -> void:
 	var f := FakeRun.new()
-	f.set_out("xrandr --query", FIX + "xrandr/uhd.txt")
+	f.set_out("xrandr --verbose", FIX + "xrandr/box_verbose_uhd.txt")
 	f.set_out("pactl list cards", FIX + "pactl/cards.txt")
 	f.set_out("pactl list short sinks", FIX + "pactl/short_sinks_hdmi2.txt")
 	f.set_out("pactl info", FIX + "pactl/info.txt")
 	var s := _setup_node(f)
 	s.start()
-	check(f.ran(["xrandr", "--output", "DP-1", "--mode", "1920x1080", "--rate", "60.00"]), "1080p60 at login")
+	check(f.ran(["xrandr", "--output", "DP-1", "--mode", "0x4a"]), "the CEA 1080p60 at login")
 	check(s.display.ok, "picture ok")
 	eq(f.calls.filter(func(c): return c[1] == "set-sink-volume").size(), 1, "volume set")
 	s._on_boot_timer()
 	eq(f.calls.filter(func(c): return c[1] == "set-sink-volume").size(), 1, "volume only once, so a change on the TV remote sticks")
-	check(f.calls.filter(func(c): return c == ["xrandr", "--query"]).size() == 2, "checked again")
+	check(f.calls.filter(func(c): return c == ["xrandr", "--verbose"]).size() == 2, "checked again")
 	for i in Tokens.SETUP_BOOT_CHECKS + 2:
 		s._on_boot_timer()
 	check(s._timer.is_stopped(), "stops after the first 30 s")
@@ -225,7 +265,7 @@ func _start() -> void:
 	main.animate = false
 	main.daemon.stub_delay = -1.0
 	fake = FakeRun.new()
-	fake.set_out("xrandr --query", FIX + "xrandr/box.txt")
+	fake.set_out("xrandr --verbose", FIX + "xrandr/box_verbose.txt")
 	main.setup.enabled = true
 	main.setup.threaded = false
 	main.setup.run = fake.call_it
@@ -254,7 +294,7 @@ func _act(action: String) -> void:
 	tree.root.push_input(a, true)
 
 
-const TO_720 := ["xrandr", "--output", "DP-1", "--mode", "1280x720", "--rate", "60.00"]
+const TO_720 := ["xrandr", "--output", "DP-1", "--mode", "0x55"]
 
 
 func test_picture_change_asks_to_keep() -> void:
@@ -285,11 +325,11 @@ func test_picture_cancel_goes_back() -> void:
 	await _start()
 	_act("accept")
 	fake.calls.clear()
-	fake.replies["xrandr --query"] = {"code": 0, "out": _read("xrandr/box.txt").replace("60.00*", "60.00 ").replace(
-		"1280x720      60.00", "1280x720      60.00*")}
+	fake.replies["xrandr --verbose"] = {"code": 0, "out": _read("xrandr/box_verbose.txt").replace(" *current", "").replace(
+		"(0x55) 74.250MHz +HSync +VSync", "(0x55) 74.250MHz +HSync +VSync *current")}
 	_act("accept")             # Cancel
 	eq(main.state.screen, State.Screen.SETTINGS, "back in Settings")
-	check(fake.ran(["xrandr", "--output", "DP-1", "--mode", "1920x1080", "--rate", "60.00"]), "old picture back")
+	check(fake.ran(["xrandr", "--output", "DP-1", "--mode", "0x4a"]), "old picture back")
 	eq(main.setup.display_mode, "1920x1080@60", "checks hold the old one")
 	eq(StateFile.load_file(main.state_path).get("display_mode", "unset"), "unset", "nothing saved")
 	_end()
@@ -320,7 +360,6 @@ func test_picture_home_goes_back() -> void:
 func test_picture_failure_toasts() -> void:
 	await _start()
 	fake.fail[" ".join(TO_720)] = 1
-	fake.fail["xrandr --addmode DP-1 1280x720_60"] = 1
 	_act("accept")
 	eq(main.state.screen, State.Screen.SETTINGS, "no confirm")
 	eq(main.toast.text, "Couldn't change the picture", "toast")
@@ -330,7 +369,7 @@ func test_picture_failure_toasts() -> void:
 
 func test_threaded_job_finishes() -> void:
 	var f := FakeRun.new()
-	f.set_out("xrandr --query", FIX + "xrandr/box.txt")
+	f.set_out("xrandr --verbose", FIX + "xrandr/box_verbose.txt")
 	var s := _setup_node(f)
 	s.threaded = true
 	s.check(true)

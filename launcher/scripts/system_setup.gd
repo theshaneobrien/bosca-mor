@@ -201,7 +201,7 @@ func _finish(job: Dictionary, out: Dictionary) -> void:
 		wifi_done.emit(out.wifi_join)
 	if out.has("display"):
 		display = out.display
-		_log("picture", out.display)
+		_log_picture(out.display, job.get("probe", true))
 	if out.has("sound"):
 		sound = out.sound
 		_log("sound", out.sound)
@@ -211,6 +211,19 @@ func _finish(job: Dictionary, out: Dictionary) -> void:
 		picture_done.emit(out.display)
 	changed.emit()
 	_next()
+
+
+# Every check that reads the TV again (login, Settings) says what the screen
+# was on, so a bad boot is in the launcher's log after a replug (D83).
+func _log_picture(r: Dictionary, probe: bool) -> void:
+	if not r.get("ok", false):
+		print("picture: %s%s" % [r.get("error", "failed"), " on " + r.output if r.has("output") else ""])
+	elif r.changed or probe:
+		print("picture: %s was %s" % [r.output, r.was])
+	if r.get("changed", false):
+		for step in r.steps:
+			print("picture: ran %s" % " ".join(step))
+		print("picture: %s timings: %s" % [Display.describe(r.mode), "; ".join(r.modes)])
 
 
 func _log(what: String, r: Dictionary) -> void:

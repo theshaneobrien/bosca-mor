@@ -1,0 +1,1 @@
+box.txt is the box's xrandr --current (report 2026-10-23). The *_verbose files are synthetic: the box's mode list in xrandr --verbose form, with made-up timings for its two 1920x1080 60.00 modes, until a report has the real --verbose.
