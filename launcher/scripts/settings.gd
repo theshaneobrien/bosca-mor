@@ -35,6 +35,7 @@ const Paths := preload("res://scripts/paths.gd")
 const Display := preload("res://scripts/display.gd")
 const Sound := preload("res://scripts/sound.gd")
 const Network := preload("res://scripts/network.gd")
+const InputModeScript := preload("res://scripts/input_mode.gd")
 
 const SECTIONS := [
 	["apps", "Apps"], ["display", "Display"], ["network", "Network"], ["sound", "Sound"],
@@ -88,7 +89,7 @@ var _apps: Array = []       # every valid app, hidden ones too, in file order
 var _raw := {}              # id -> entry as written in apps.json
 var _invalid := []          # entries that failed to load, kept on save
 var _broken := ""           # why apps.json as a whole won't load; nothing is saved while set
-var _row_icons := {}        # app id and icon -> [found, texture], filled as rows draw, cleared by open()
+var _row_icons := {}        # app id and icon -> [found, texture], filled as rows draw, cleared by open() and close()
 var _entries: Array = []    # picker: installed apps not yet on Home
 var _items: Array = []      # content items for the current level
 var _scroll := 0
@@ -135,6 +136,7 @@ func open() -> void:
 func close() -> void:
 	visible = false
 	_osk.close()
+	_row_icons.clear()          # every app's decoded logo: not held while an app runs
 
 
 func section_id() -> String:
@@ -186,12 +188,16 @@ func handle(ev: InputEvent) -> bool:
 	return true
 
 
-# A click acts only on the section, row or button under the pointer, the way
-# Home and the sidebar do; a click on nothing does nothing. Hover doesn't move
-# focus: rows scroll, and air-mouse drift would chase them.
+# With the pointer in use, a click acts only on the section, row or button
+# under it, the way Home and the sidebar do; a click on nothing does nothing.
+# Any other click is OK on the focused row. Hover doesn't move focus: rows
+# scroll, and air-mouse drift would chase them.
 func _click(pos: Vector2) -> void:
 	if moving:
 		_drop()
+		return
+	if not InputModeScript.at_pointer(self):
+		_accept()
 		return
 	var hit := _hit(pos)
 	if hit.has("nav"):
@@ -1014,7 +1020,7 @@ func _row_icon(app: Dictionary) -> Array:
 		var found := IconResolver.find(app)
 		var tex: Texture2D = null
 		if found:
-			tex = IconResolver.texture(found.path, roundi(Tokens.ROW_TILE * Tokens.ICON_INSET * _scale), app.id + "-row")
+			tex = IconResolver.texture(found.path, roundi(Tokens.ROW_GLYPH * _scale), app.id + "-row")   # the size _render draws it
 		_row_icons[key] = [found, tex]
 	return _row_icons[key]
 

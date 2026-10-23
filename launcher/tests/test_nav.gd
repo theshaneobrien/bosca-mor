@@ -238,6 +238,7 @@ func test_mouse_in_sidebar_and_confirm() -> void:
 	_start(S.SIDEBAR)
 	await tree.process_frame
 	var item_rect: Rect2 = main.sidebar._items[4].get_global_rect()
+	_use_pointer(item_rect.get_center())
 	_click(item_rect.get_center())
 	eq(main.state.screen, S.CONFIRM, "click Power off opens the confirm")
 	var cancel: Rect2 = main.confirm._buttons[0].get_global_rect()
@@ -474,6 +475,18 @@ func _move(pos: Vector2) -> void:
 	tree.root.push_input(e, true)
 
 
+# Brings the pointer to rest at pos from far enough away to be in use:
+# pointer mode, cursor showing.
+func _use_pointer(pos: Vector2) -> void:
+	var im = tree.root.get_node("InputMode")
+	im.fake_now_ms = 1000
+	_move(pos + Vector2(0, -Tokens.POINTER_MOVE - 20))
+	im.fake_now_ms = 1050
+	_move(pos)
+	im.fake_now_ms = -1
+	eq(im.mode, InputModeScript.Mode.POINTER, "pointer in use")
+
+
 # The remote's Power reaches the launcher only through the daemon. It counts
 # as a key press (remote mode), and a pointer resting on the action button
 # when the confirm opens can't take the focus off Cancel by jitter (Law 2).
@@ -500,4 +513,93 @@ func test_power_from_the_daemon_keeps_cancel_focused() -> void:
 	await tree.process_frame         # its Accept arrives with the next frame: let it land here
 	await tree.process_frame
 	eq(main.state.screen, S.SIDEBAR, "and it pressed Cancel")
+	_teardown()
+
+
+# Review: with the cursor resting where Power off appears, Power opened the
+# confirm with Cancel focused, but a click at that spot (the G20S OK with the
+# air mouse on, say) pressed Power off: one press off the box (Law 2).
+func test_a_click_before_the_pointer_moves_never_powers_off() -> void:
+	await _setup()
+	var im = tree.root.get_node("InputMode")
+	_start(S.HOME)
+	main.state.ask("poweroff")             # only to find where Power off sits
+	await tree.process_frame
+	var action: Vector2 = main.confirm._buttons[1].get_global_rect().get_center()
+	main.state.go(S.HOME)
+	_use_pointer(action)
+	main.daemon.calls.clear()
+	main.daemon.power_pressed.emit()
+	eq(main.confirm.button_at(action), 1, "the pointer rests on Power off")
+	_click(action)
+	eq(main.state.screen, S.SIDEBAR, "the click pressed Cancel")
+	eq(main.daemon.calls, [], "no power call")
+
+	# The pointer in use (a mouse), still resting on Power off: the focus
+	# shown is what a click on a button presses until the pointer moves.
+	main.state.ask("poweroff")
+	_move(action + Vector2(1, 0))
+	check(im.cursor_visible, "the cursor shows: the next click is at the pointer")
+	_click(action)
+	eq(main.state.screen, S.SIDEBAR, "Cancel again, not Power off")
+	eq(main.daemon.calls, [], "still no power call")
+
+	# A real move onto Power off, then a click, is the second press it needs.
+	main.state.ask("poweroff")
+	_move(action + Vector2(0, -Tokens.POINTER_MOVE - 20))
+	_move(action)
+	eq(main.state.confirm_focus, 1, "hover moved the focus once the pointer moved")
+	_click(action)
+	eq(main.state.screen, S.OFF, "that click powers off")
+	eq(main.daemon.calls, [["power", "poweroff"]], "one power call")
+	_teardown()
+
+
+# The same hold covers Still open and its force-close confirm.
+func test_a_click_before_the_pointer_moves_presses_what_still_open_shows() -> void:
+	await _setup()
+	_still()
+	await tree.process_frame
+	var close: Vector2 = main.still._buttons[1].get_global_rect().get_center()
+	_use_pointer(close)
+	main.daemon.still_open.emit(STILL)     # opens again, pointer resting on Close anyway
+	_click(close)
+	eq(main.state.screen, S.DESKTOP, "the click pressed Show me, the focused button")
+	eq(main.daemon.calls, [["show_window", "0x3a00007"]], "nothing closed")
+	_still()
+	main.state.set_still_focus(1)
+	_act("accept")                         # Close anyway: the confirm opens over it
+	await tree.process_frame
+	var action: Vector2 = main.confirm._buttons[1].get_global_rect().get_center()
+	_use_pointer(action)
+	main.state.handle("back")
+	main.state.handle("accept")            # open it again with the pointer resting there
+	_move(action + Vector2(1, 1))
+	_click(action)
+	eq(main.state.screen, S.STILL_OPEN, "Cancel, back to Still open")
+	eq(main.daemon.calls, [], "nothing force-closed")
+	_teardown()
+
+
+# With the cursor hidden, a click is OK on what is focused, wherever it lands:
+# the remote's D-pad and an OK that is a left click work everywhere.
+func test_a_click_without_the_pointer_in_use_is_ok() -> void:
+	await _setup()
+	var im = tree.root.get_node("InputMode")
+	_start(S.SIDEBAR)
+	await tree.process_frame
+	_click(main.sidebar._items[4].get_global_rect().get_center())
+	eq(main.state.screen, S.SETTINGS, "the focused Settings, not Power off under the pointer")
+	main.state.go(S.HOME)
+	_start(S.SIDEBAR)
+	im._set_mode(InputModeScript.Mode.REMOTE)
+	_click(Vector2(1500, 500))
+	eq(main.state.screen, S.SETTINGS, "not the dimmed area either")
+	main.state.go(S.HOME)
+	main.daemon.power_pressed.emit()
+	_act("nav_right")
+	main.daemon.calls.clear()
+	_click(Vector2(10, 10))
+	eq(main.state.screen, S.OFF, "Power, Right, then OK as a click powers off")
+	eq(main.daemon.calls, [["power", "poweroff"]], "one power call")
 	_teardown()

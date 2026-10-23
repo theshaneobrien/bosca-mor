@@ -137,7 +137,9 @@ func _unhandled_input(ev: InputEvent) -> void:
 	elif ev.is_action_pressed("nav_right", true):
 		move(1)
 	elif ev.is_action_pressed("accept"):
-		if ev is InputEventMouseButton:
+		# A click with the pointer in use launches the tile under it (a click
+		# on nothing does nothing); any other click is OK on the focused tile.
+		if ev is InputEventMouseButton and InputModeScript.at_pointer(self):
 			var i := tile_at(ev.position)
 			if i < 0:
 				return
@@ -242,12 +244,17 @@ func tile_at(pos: Vector2) -> int:
 
 
 # Hover moves focus only in pointer mode, after the pointer rests on a tile.
+# The part of a tile showing at the screen edge takes no hover: picking it
+# scrolls the row, which would slide another tile into that strip under the
+# still pointer. A click there still launches it.
 func _on_pointer_move(pos: Vector2) -> void:
 	var im := _input_mode()
 	if im == null or im.mode != InputModeScript.Mode.POINTER:
 		_hover = -1
 		return
 	var i := tile_at(pos)
+	if i >= 0 and not _on_screen(i):
+		i = -1
 	if i == _hover:
 		return
 	_hover = i
@@ -260,6 +267,9 @@ func _on_pointer_move(pos: Vector2) -> void:
 func resolve_dwell() -> void:
 	var im := _input_mode()
 	if _hover < 0 or im == null or im.mode != InputModeScript.Mode.POINTER:
+		return
+	if not _on_screen(_hover):
+		_hover = -1                     # the row moved under a still pointer (the wheel)
 		return
 	var left: int = int(Tokens.HOVER_DWELL * 1000) - (im.now_ms() - _hover_since)
 	if left <= 0:
@@ -275,6 +285,10 @@ func _input_mode() -> Node:
 	return get_node_or_null("/root/InputMode")
 
 
+## True if tile i is all on screen once the row is where it is heading.
+func _on_screen(i: int) -> bool:
+	var left := _strip_x + i * (Tokens.TILE + Tokens.TILE_GAP)
+	return left >= 0.0 and left + Tokens.TILE <= size.x
 
 
 ## keep_row is for the pointer: it picked a tile it can see, so the row only
@@ -297,10 +311,8 @@ func set_focus(i: int, animate := true, keep_row := false) -> void:
 	_show_hero(apps[focus], animate)
 	var step := Tokens.TILE + Tokens.TILE_GAP
 	var strip_x := Tokens.PAD_X - maxi(0, focus - Tokens.CAROUSEL_LEAD) * step
-	if keep_row:
-		var left := _strip_x + focus * step     # where the tile rests now
-		if left >= 0.0 and left + Tokens.TILE <= size.x:
-			strip_x = _strip_x
+	if keep_row and _on_screen(focus):
+		strip_x = _strip_x
 	var moved := strip_x != _strip_x
 	_strip_x = strip_x
 	if animate:

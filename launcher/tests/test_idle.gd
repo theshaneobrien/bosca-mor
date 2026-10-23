@@ -355,6 +355,38 @@ func test_replaced_app_does_not_end_a_panel() -> void:
 	_teardown()
 
 
+# Review: Power over a panel, then Cancel, Back and another tile. The panel's
+# exit came as replaced (or under an old id) and was dropped, so the flag
+# stayed set; when the new app quit, the launcher came back with Home still
+# black and taking no keys.
+func test_a_panel_replaced_by_a_tile_launch_leaves_no_trace() -> void:
+	await _setup()
+	main.state.go(State.Screen.SETTINGS)
+	main._launch_panel(SettingsView.PANELS.network)
+	main.daemon.app_window.emit("network-settings")
+	_check_hidden("behind the panel")
+	main.daemon.power_pressed.emit()
+	eq(main.state.screen, State.Screen.CONFIRM, "confirm over the panel")
+	main.state.handle("accept")            # Cancel
+	main.state.handle("back")              # Home
+	_finish_tweens()
+	eq(main.state.screen, State.Screen.HOME, "Home")
+	main.home.set_focus(1, false)
+	_act("accept")                         # Plex
+	main.daemon._dispatch({"evt": "app_exited", "id": "network-settings", "code": 0, "replaced": true})
+	main.daemon.app_exited.emit("network-settings", 0)   # or under its own id
+	_finish_tweens()
+	main.daemon.app_window.emit("plex")
+	_check_hidden("behind Plex")
+	main.daemon.app_exited.emit("plex", 0)
+	_check_shown("Plex quit")
+	check(not main.home.is_launching(), "Home takes input again")
+	check(main.home._fade.visible, "with the return fade")
+	_finish_tweens()
+	eq(main.home._fade.visible, false, "and the fade ends")
+	_teardown()
+
+
 # Power within Desktop's fade to black: the black cover must go with it, or
 # the confirm and then Home sit under black.
 func test_leaving_during_the_desktop_fade_clears_the_cover() -> void:
