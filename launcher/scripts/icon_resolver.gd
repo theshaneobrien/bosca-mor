@@ -157,12 +157,14 @@ static func _side(img: Image, cover: bool) -> int:
 
 # A 4000 px press-kit logo would hold 85 MB with mipmaps, so cut it down to
 # the drawn size. Halving first is cheap; Lanczos straight from 4000 px is
-# slow. Never scales up.
+# slow. Never scales up. shrink_x2 leaves an image it can't halve as it is
+# (1 px thin, or a compressed format, which can't be resized either), so the
+# halving stops there or it would never end; the resize does the rest.
 static func _shrink(img: Image, px: int, cover: bool) -> void:
 	var side := _side(img, cover)
-	if px <= 0 or side <= px:
+	if px <= 0 or side <= px or img.is_compressed():
 		return
-	while side >= 2 * px:
+	while side >= 2 * px and mini(img.get_width(), img.get_height()) >= 2:
 		img.shrink_x2()
 		side = _side(img, cover)
 	var k := float(px) / side

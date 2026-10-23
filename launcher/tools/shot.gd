@@ -76,6 +76,8 @@ func _shoot() -> void:
 	vp.add_child(main)
 	main.animate = false
 	main.daemon.stub_delay = -1.0
+	# Off outside an exported build, so Main started no real check that this
+	# one would wait behind.
 	main.setup.enabled = true
 	main.setup.threaded = false
 	main.setup.run = _fake_run
