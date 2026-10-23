@@ -248,9 +248,111 @@ class TestApps(DaemonCase):
         self.d.handle({"cmd": "launch", "id": "b", "argv": ["sleep", "60"]})
         self.assertTrue(self.d.pump(lambda: self.d.app and self.d.app.id == "b"))
         self.assertIsNotNone(first.poll())
-        self.assertEqual(self.d.events("app_exited")[0]["id"], "a")
+        # D86: the exit says it was replaced, so the launcher keeps waiting for b.
+        self.assertEqual(self.d.events("app_exited"),
+                         [{"evt": "app_exited", "id": "a", "code": -signal.SIGTERM, "replaced": True}])
         self.assertEqual(self.d.events("show"), [])
+        self.assertNotIn(["wmctrl", "-F", "-a", bi.LAUNCHER_TITLE], self.d.ran)
         self.assertEqual(self.d.signals[0][0], signal.SIGTERM)
+
+    def test_replacing_a_kept_app_sends_no_show(self):
+        # Spotify plays behind Home; the viewer picks Plex (D86).
+        self.d.handle({"cmd": "launch", "id": "music", "argv": ["sleep", "60"], "keep_on_home": True})
+        self.d.handle({"cmd": "state", "visible": False})
+        self.d.on_home()
+        self.d.handle({"cmd": "state", "visible": True})
+        self.assertEqual(self.d.signals, [], "keep_on_home: it runs on behind the launcher")
+        self.d.handle({"cmd": "launch", "id": "plex", "argv": ["sleep", "60"]})
+        self.d.handle({"cmd": "state", "visible": False})   # the launch fade ended
+        self.assertTrue(self.d.pump(lambda: self.d.app and self.d.app.id == "plex"))
+        exited = self.d.events("app_exited")
+        self.assertEqual([(e["id"], e.get("replaced")) for e in exited], [("music", True)])
+        self.assertEqual(len(self.d.events("show")), 1, "only the Home press showed the launcher")
+
+    def test_launcher_shown_over_an_app_ends_it(self):
+        # Power while Netflix plays: the launcher comes back over it (D85).
+        self.d.handle({"cmd": "launch", "id": "netflix", "argv": ["sleep", "60"]})
+        self.d.handle({"cmd": "state", "visible": False})
+        self.d.handle({"cmd": "state", "visible": True})
+        self.assertTrue(self.d.app.closing)
+        self.assertEqual([s for s, _ in self.d.signals], [signal.SIGTERM])
+        self.assertTrue(self.d.pump(lambda: self.d.events("app_exited")))
+        self.assertEqual(self.d.events("app_exited"),
+                         [{"evt": "app_exited", "id": "netflix", "code": -signal.SIGTERM}])
+        self.assertEqual(self.d.events("show"), [], "the launcher is already on screen")
+        self.assertIsNone(self.d.app)
+
+    def test_launcher_shown_over_a_kept_app_leaves_it(self):
+        self.d.handle({"cmd": "launch", "id": "music", "argv": ["sleep", "60"], "keep_on_home": True})
+        self.d.handle({"cmd": "state", "visible": False})
+        self.d.handle({"cmd": "state", "visible": True})
+        self.assertEqual(self.d.signals, [])
+        self.assertFalse(self.d.app.closing)
+
+    def test_launch_while_shown_is_not_ended(self):
+        # The launcher is on screen when it asks for the app, and goes off
+        # screen when the launch fade ends: no hidden-to-shown change.
+        self.d.handle({"cmd": "state", "visible": True})
+        self.d.handle({"cmd": "launch", "id": "plex", "argv": ["sleep", "60"]})
+        self.d.handle({"cmd": "state", "visible": True})   # sent again on a reconnect
+        self.d.handle({"cmd": "state", "visible": False})
+        self.assertEqual(self.d.signals, [])
+        self.assertFalse(self.d.app.closing)
+
+    def test_group_that_outlives_sigkill_is_given_up(self):
+        self.d.handle({"cmd": "launch", "id": "stuck", "argv": ["sleep", "60"]})
+        self.d.handle({"cmd": "state", "visible": False})
+        self.d._group_alive = lambda pgid: True   # a member stuck in D state
+        self.d.clock = 100.0
+        self.d.on_home()
+        self.d.clock = 100.0 + bi.GRACE_S
+        self.d.tick()
+        self.assertEqual([s for s, _ in self.d.signals], [signal.SIGTERM, signal.SIGKILL])
+        self.assertEqual(self.d.events("show"), [])
+        self.d.clock = 100.0 + 2 * bi.GRACE_S - 0.1
+        self.d.tick()
+        self.assertEqual(self.d.events("show"), [], "still waiting for SIGKILL to land")
+        self.d.clock = 100.0 + 2 * bi.GRACE_S
+        with self.assertLogs("boscamor-input", "WARNING"):
+            self.d.tick()
+        exited = self.d.events("app_exited")
+        self.assertEqual(len(exited), 1)
+        self.assertIsInstance(exited[0]["code"], int, "the launcher reads it as a number")
+        self.assertEqual(self.d.events("show"), [{"evt": "show"}])
+        self.assertIsNone(self.d.app)
+
+    def test_permission_error_on_signal_is_logged(self):
+        self.d.handle({"cmd": "launch", "id": "dummy", "argv": ["sleep", "60"]})
+        self.d.handle({"cmd": "state", "visible": False})
+
+        def denied(pgid, sig):
+            raise PermissionError(1, "Operation not permitted")
+        self.d.signal_group = denied
+        with self.assertLogs("boscamor-input", "WARNING"):
+            self.d.on_home()
+        self.assertTrue(self.d.app.closing)
+        del self.d.signal_group   # back to the real one for tearDown
+
+
+class TestBadCommands(DaemonCase):
+    """One bad line from the launcher must not end the daemon, which would
+    lose track of the running app."""
+
+    def test_odd_values_are_refused(self):
+        self.d._handle_line(b'{"cmd":"power","action":["x"]}')
+        self.d._handle_line(b'{"cmd":"power","action":{"a":1}}')
+        self.assertEqual(self.d.ran, [])
+        self.d._handle_line(b"[" * 100000 + b"]" * 100000)   # too deep for json
+        self.d._handle_line(json.dumps({"cmd": "launch", "id": "x", "argv": ["sle\u0000ep", "1"]}).encode())
+        self.assertEqual([e["id"] for e in self.d.events("launch_failed")], ["x"])
+        self.assertIsNone(self.d.app)
+
+    def test_a_failing_handler_is_logged(self):
+        def broken(action):
+            raise RuntimeError("boom")
+        self.d.power = broken
+        with self.assertLogs("boscamor-input", "ERROR"):
+            self.d._handle_line(b'{"cmd":"power","action":"poweroff"}')
 
     def test_only_signals_its_own_group(self):
         self.d.handle({"cmd": "launch", "id": "dummy", "argv": ["sleep", "60"]})

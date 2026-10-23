@@ -1,6 +1,7 @@
 """Return to Bosca Mor: window listing from xprop text, filtering, the close
 poll with a fake clock, Still open, Show me and Close anyway."""
 import os
+import signal
 import unittest
 
 os.environ["BOSCAMOR_DRY_RUN"] = "1"
@@ -210,6 +211,176 @@ class TestReturnFlow(unittest.TestCase):
         d.handle({"cmd": "desktop", "notify": False})
         self.assertTrue(d.desktop)
         self.assertEqual(d.ran, [])
+
+    def start_with_prompt_up(self):
+        """Desktop, then Home: Firefox and the editor close, Writer stays up
+        asking to save."""
+        d = self.d
+        d.handle({"cmd": "desktop"})
+        d.on_home()
+        d.close_window("0x2a00003")
+        d.close_window("0x4400002")
+
+    def test_home_again_during_the_prompt_wait_ends_it(self):
+        d = self.d
+        self.start_with_prompt_up()
+        d.clock = 1010.0
+        d.on_home()
+        self.assertEqual(d.sent, [], "no Home over the prompt")
+        d.clock = 1010.25
+        d.tick()
+        still = d.events("still_open")
+        self.assertEqual(len(still), 1, "Still open, so Show me can bring the prompt back")
+        self.assertEqual([(a["wid"], a["asking"]) for a in still[0]["apps"]], [("0x3a00007", True)])
+        self.assertIsNone(d.returning)
+
+    def test_home_again_keeps_the_first_five_seconds(self):
+        d = self.d
+        d.handle({"cmd": "desktop"})
+        d.on_home()
+        d.clock = 1000.1
+        d.on_home()        # an impatient double press, Firefox still closing
+        for i in range(1, 19):
+            d.clock = 1000.1 + i * 0.25
+            d.tick()
+        self.assertEqual(d.sent, [])
+        d.clock = 1005.0
+        d.tick()
+        self.assertEqual(len(d.events("still_open")), 1)
+
+    def test_launcher_back_abandons_the_return(self):
+        d = self.d
+        self.start_with_prompt_up()
+        d.handle({"cmd": "state", "visible": True})   # Power, then Home, for example
+        self.assertIsNone(d.returning)
+        calls = d.list_calls
+        t = 1000.0
+        while t < 1000.0 + bi.RETURN_PROMPT_WAIT_S + 10:
+            t += 0.25
+            d.clock = t
+            d.tick()
+        self.assertEqual(d.events("show") + d.events("still_open"), [],
+                         "nothing pops up later over the next app")
+        self.assertEqual(d.list_calls, calls, "no window-list polls behind it")
+        d.handle({"cmd": "desktop"})
+        d.on_home()
+        self.assertIsNotNone(d.returning, "Home on the desktop runs Return again")
+
+    def test_prompt_wait_reads_each_window_once(self):
+        d = self.d
+        real = d.run_capture
+        failed = {"0x3a0012a"}       # the prompt's first read fails
+        ids = []
+
+        def capture(argv):
+            if argv[:2] == ["xprop", "-id"]:
+                ids.append(argv[2])
+                if argv[2] in failed:
+                    failed.discard(argv[2])
+                    return ""
+            return real(argv)
+        d.run_capture = capture
+        d.handle({"cmd": "return"})
+        self.assertIn("0x3a0012a", ids)
+        d.close_window("0x2a00003")
+        d.close_window("0x4400002")
+        ids.clear()
+        d.clock = 1000.25
+        d.tick()
+        self.assertEqual(ids, ["0x3a0012a"], "only the failed read is tried again")
+        ids.clear()
+        lists = d.list_calls
+        for i in range(2, 40):
+            d.clock = 1000.0 + i * 0.25
+            d.tick()
+        self.assertEqual(ids, [], "no more reads of windows already seen")
+        self.assertEqual(d.list_calls, lists + 38, "one window-list read per poll")
+        self.assertEqual(d.sent, [], "still waiting on the prompt")
+
+
+class TestDesktopWithAnApp(unittest.TestCase):
+    """The desktop while the launcher's app is still tracked: Home runs
+    Return, and a keep_on_home app's own windows are left open."""
+
+    MUSIC = "0x6000003"   # stands in for the kept app's window
+
+    def setUp(self):
+        self.d = FakeX()
+        self.d.open_windows = ["0x1c00003", "0x1e00004", "0x5200005"]  # desktop, panel, launcher
+        self.d.logs = []
+        self.handler = _ListHandler(self.d.logs)
+        bi.log.addHandler(self.handler)
+        self.level = bi.log.level
+        bi.log.setLevel(bi.logging.INFO)
+
+    def tearDown(self):
+        bi.log.setLevel(self.level)
+        bi.log.removeHandler(self.handler)
+        if self.d.app:
+            try:
+                os.killpg(self.d.app.pgid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            self.d.app.proc.wait()
+        self.d.close()
+
+    def start_kept_app(self):
+        d = self.d
+        d.handle({"cmd": "launch", "id": "music", "argv": ["sleep", "60"], "keep_on_home": True})
+        d.open_windows.append(self.MUSIC)
+        d.handle({"cmd": "state", "visible": False})
+        d.on_home()                                  # Home: it plays on behind the launcher
+        d.handle({"cmd": "state", "visible": True})
+        d.handle({"cmd": "desktop"})
+
+    def test_kept_app_windows_survive_return(self):
+        d = self.d
+        self.start_kept_app()
+        d.open_windows.append("0x2a00003")           # the viewer opens Firefox
+        d.on_home()
+        self.assertEqual(d.acted(), ["dry run: would run wmctrl -i -c 0x2a00003"])
+        d.close_window("0x2a00003")
+        d.clock = 1000.25
+        d.tick()
+        self.assertEqual(d.events("show")[-1:], [{"evt": "show"}])
+        self.assertIsNone(d.returning)
+        self.assertEqual(d.signals, [])
+        self.assertEqual(d.app.id, "music")
+
+    def test_windows_left_open_are_not_taken_for_the_app(self):
+        d = self.d
+        self.start_kept_app()
+        d.open_windows.append("0x3a00007")           # Writer, which won't close
+        d.on_home()
+        d.clock = 1000.0 + bi.RETURN_WAIT_S
+        d.tick()
+        still = d.events("still_open")
+        self.assertEqual([a["wid"] for a in still[0]["apps"]], ["0x3a00007"], "not the kept app")
+        d.handle({"cmd": "state", "visible": True})
+        d.handle({"cmd": "desktop", "notify": False})   # Back to desktop
+        d.on_home()
+        self.assertEqual(d.acted(), ["dry run: would run wmctrl -i -c 0x3a00007"] * 2)
+
+    def test_app_on_the_desktop_closes_then_return_runs(self):
+        d = self.d
+        d.handle({"cmd": "launch", "id": "plex", "argv": ["sleep", "60"]})
+        d.handle({"cmd": "desktop"})
+        d.open_windows.append("0x2a00003")
+        d.on_home()
+        self.assertTrue(d.app.closing)
+        self.assertTrue(d.pump(lambda: d.app is None))
+        self.assertEqual(d.events("show"), [], "Return, not straight to Home")
+        self.assertEqual(d.acted(), ["dry run: would run wmctrl -i -c 0x2a00003"])
+        self.assertIsNotNone(d.returning)
+
+    def test_app_quitting_on_the_desktop_leaves_the_launcher_minimised(self):
+        d = self.d
+        self.start_kept_app()
+        d.ran.clear()
+        d.app.proc.kill()
+        self.assertTrue(d.pump(lambda: d.app is None))
+        self.assertEqual(d.events("app_exited")[-1]["id"], "music")
+        self.assertNotIn(["wmctrl", "-F", "-a", bi.LAUNCHER_TITLE], d.ran)
 
 
 class _ListHandler(bi.logging.Handler):
