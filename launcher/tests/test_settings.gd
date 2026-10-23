@@ -457,6 +457,16 @@ func test_startup_toggle_keeps_the_key_in_its_group() -> void:
 		eq(Array(lines).filter(func(l): return l.begins_with("X-GNOME-Autostart-enabled")).size(), 1, "one key")
 		eq(Autostart.enabled(path), on, "reads back")
 		check(lines.has("Hidden=true") and lines.has("# hand edited") and lines.has("Exec=/opt/boscamor/boscamor"), "the rest kept")
+	# An older build put the key above the group, which makes Cinnamon reject
+	# the whole file: it reads as off, and one toggle mends it.
+	Apps.write_atomic(path, "# c\nX-GNOME-Autostart-enabled=false\n[Desktop Entry]\nType=Application\nExec=/opt/boscamor/boscamor\n")
+	eq(Autostart.enabled(path), false, "a broken file reads as off: it never starts")
+	check(Autostart.set_enabled(true, path), "rewritten")
+	var mended := FileAccess.get_file_as_string(path).split("\n")
+	eq(mended.find("X-GNOME-Autostart-enabled=false"), -1, "the stray key is gone: %s" % [mended])
+	check(mended.find("X-GNOME-Autostart-enabled=true") > mended.find("[Desktop Entry]"), "the key is inside the group: %s" % [mended])
+	eq(mended[0], "# c", "the comment kept")
+	eq(Autostart.enabled(path), true, "reads back on")
 	Apps.write_atomic(path, "# no group\nExec=x\n")
 	check(not Autostart.set_enabled(false, path), "not a desktop entry: left alone")
 	eq(FileAccess.get_file_as_string(path), "# no group\nExec=x\n", "unchanged")
@@ -627,6 +637,24 @@ func _centre_of(c: Control) -> Vector2:
 	return c.get_global_rect().get_center()
 
 
+func _move(pos: Vector2) -> void:
+	var e := InputEventMouseMotion.new()
+	e.position = pos
+	e.global_position = pos
+	tree.root.push_input(e, true)
+
+
+# A move far enough to put the pointer in use: pointer mode, cursor showing.
+func _use_pointer() -> void:
+	var im = tree.root.get_node("InputMode")
+	im.fake_now_ms = 1000
+	_move(Vector2(Tokens.BASE_SIZE) / 2.0)
+	im.fake_now_ms = 1050
+	_move(Vector2(Tokens.BASE_SIZE) / 2.0 + Vector2(Tokens.POINTER_MOVE + 20, 0))
+	im.fake_now_ms = -1
+	eq(im.mode, InputModeScript.Mode.POINTER, "pointer in use")
+
+
 func _net(ssid: String, open := false) -> Dictionary:
 	return {"ssid": ssid, "signal": 70, "secure": not open, "known": false, "in_use": false, "enterprise": false}
 
@@ -750,15 +778,23 @@ func test_row_icons_are_decoded_once_per_open() -> void:
 	IconResolver.reset()
 	IconResolver.roots = {"dropin": icons, "cache": icons, "flatpak": [], "themes": [], "pixmaps": [], "desktop": [icons]}
 	await _setup()
+	st._scale = 1.0                     # as on a 1080p TV (the headless window is tiny)
+	st.open()                           # drawn again at that scale
 	_act("nav_right")
 	var tex: Texture2D = _row_glyph(0).texture
 	check(tex != null, "the drop-in is drawn")
+	if tex:
+		eq(tex.get_width(), roundi(_row_glyph(0).custom_minimum_size.x), "decoded at the size the row draws it")
+		eq(tex.get_width(), Tokens.ROW_GLYPH, "ROW_GLYPH, not stretched up from less")
 	_act("nav_down")
 	_act("nav_down")
 	check(_row_glyph(0).texture == tex, "the same texture after two presses, not decoded again")
 	st.open()
 	_act("nav_right")
 	check(_row_glyph(0).texture != tex, "decoded again when Settings opens again")
+	check(not st._row_icons.is_empty(), "held while Settings is open")
+	main.state.go(State.Screen.HOME)
+	check(st._row_icons.is_empty(), "let go once Settings closes")
 	IconResolver.reset()
 	_teardown()
 	_rm_tree(icons)
@@ -845,13 +881,14 @@ func test_wifi_rescan_never_moves_focus_onto_another_network() -> void:
 	_teardown()
 
 
-# A click acts on the row, button or key under the pointer, like Home and the
-# sidebar; it used to act on whatever had focus.
+# With the pointer in use, a click acts on the row, button or key under it,
+# like Home and the sidebar; it used to act on whatever had focus.
 func test_a_click_acts_on_what_is_under_the_pointer() -> void:
 	await _setup()
 	_act("nav_right")
 	eq(st._current().app.id, "youtube", "focus on YouTube")
 	await tree.process_frame
+	_use_pointer()
 	_click(_centre_of(st._list.get_child(1)))     # Add app sits in the heading: YouTube, then Plex
 	eq(_file_entry("plex").get("hidden"), true, "Plex hidden")
 	eq(_file_entry("youtube").has("hidden"), false, "not YouTube")
@@ -885,6 +922,7 @@ func test_a_click_on_the_keyboard_presses_the_key_under_it() -> void:
 	_act("accept")                     # A website: the name keyboard
 	var osk: Control = st.osk()
 	await tree.process_frame
+	_use_pointer()
 	_click(_centre_of(osk._keys[2][7]))
 	eq(osk.text, "k", "typed the key under the pointer, not the focused 1")
 	eq(osk.focused_key(), "k", "and focused it")
@@ -894,5 +932,43 @@ func test_a_click_on_the_keyboard_presses_the_key_under_it() -> void:
 	_click(_centre_of(osk._keys[4][0]))      # Shift
 	_click(_centre_of(osk._keys[1][0]))
 	eq(osk.text, "kQ", "Shift, then Q")
+	osk.close()
+	_teardown()
+
+
+# The G20S OK may be a left click while the air mouse is on. With the cursor
+# hidden it lands wherever the gyro left it, so it must be OK on the row or
+# key the D-pad highlighted (Reduce motion, say), not on what is under it.
+func test_a_click_without_the_pointer_in_use_is_ok_on_the_focused_row() -> void:
+	await _setup()
+	_act("nav_right")
+	eq(st._current().app.id, "youtube", "focus on YouTube")
+	await tree.process_frame
+	_click(_centre_of(st._list.get_child(1)))      # Plex's row
+	eq(_file_entry("youtube").get("hidden"), true, "YouTube, the focused row, hidden")
+	eq(_file_entry("plex").has("hidden"), false, "not Plex under the pointer")
+	_key(0, KEY_DOWN)                    # the remote again: cursor hidden
+	_key(0, KEY_UP)
+	_click(_centre_of(st._nav.get_child(1)))       # Display, under the pointer
+	eq(st.section_id(), "apps", "still in Apps")
+	eq(_file_entry("youtube").has("hidden"), false, "OK on YouTube again: shown")
+	_teardown()
+
+
+func test_a_click_without_the_pointer_in_use_presses_the_focused_key() -> void:
+	await _setup()
+	_act("nav_right")
+	_act("nav_up")
+	_act("accept")
+	_act("accept")                     # A website: the name keyboard
+	var osk: Control = st.osk()
+	await tree.process_frame
+	_key(0, KEY_RIGHT)                 # from 1 to 2, on the remote
+	_click(_centre_of(osk._keys[2][7]))
+	eq(osk.text, "2", "typed the focused 2, not the k under the pointer")
+	_key(0, KEY_DOWN)
+	_click(Vector2(Tokens.PAD_X / 2, Tokens.PAD_TOP / 2))
+	eq(osk.text, "2w", "a click off the keys types the focused key too")
+	check(osk.visible, "still open")
 	osk.close()
 	_teardown()

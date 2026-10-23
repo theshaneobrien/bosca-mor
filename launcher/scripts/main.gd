@@ -269,17 +269,20 @@ func _on_memory_warning(app_id: String, mb: int) -> void:
 	toast.push("Memory ran low while %s was open" % app_name(app_id) if app_id else "Memory ran low")
 
 
+# _panel_running describes this launch only: an older panel's exit may never
+# reach _on_app_exited (D86), so it can't be left to clear the flag.
 func _launch(app: Dictionary) -> void:
 	_launched = app
 	_window_seen = false
+	_panel_running = false
 	daemon.launch(app)
 
 
 func _launch_panel(app: Dictionary) -> void:
 	if is_hidden:
 		return                           # one is already on its way
-	_panel_running = true
 	_launch(app)
+	_panel_running = true
 	_await_window()
 
 
@@ -364,6 +367,7 @@ func _on_show_home() -> void:
 # was on screen (SPEC: "Power, in any state").
 func _on_power_pressed() -> void:
 	_remote_key()
+	_panel_running = false               # the daemon ends a panel the launcher comes back over (D85)
 	# The last frame drawn was black, so there is nothing to blur yet.
 	var from_black: bool = is_hidden or home.is_launching() or state.screen in [State.Screen.DESKTOP, State.Screen.OFF]
 	show_launcher()
@@ -471,9 +475,14 @@ func _unhandled_input(ev: InputEvent) -> void:
 					state.set_still_focus(b)
 		return
 	if ev is InputEventMouseButton and ev.is_action_pressed("accept"):
+		# A click with the pointer in use acts on what is under it; any other
+		# click is OK on what is focused.
+		var at_pointer := InputModeScript.at_pointer(self)
 		if s == State.Screen.SIDEBAR:
 			var i: int = sidebar.item_at(ev.position)
-			if i >= 0:
+			if not at_pointer:
+				state.handle("accept")
+			elif i >= 0:
 				state.set_sidebar_focus(i)
 				state.run_item(State.ITEMS[i])
 			elif sidebar.is_on_dim(ev.position):
@@ -482,7 +491,15 @@ func _unhandled_input(ev: InputEvent) -> void:
 			return
 		if s == State.Screen.CONFIRM or s == State.Screen.STILL_OPEN:
 			var b: int = (confirm if s == State.Screen.CONFIRM else still).button_at(ev.position)
-			if b >= 0:
+			if not at_pointer:
+				state.handle("accept")
+			elif _hover_held:
+				# Law 2: until the pointer has really moved, the focus shown
+				# (Cancel when it opens) is what a click on a button presses,
+				# whichever button the pointer rests on.
+				if b >= 0:
+					state.handle("accept")
+			elif b >= 0:
 				if s == State.Screen.CONFIRM:
 					state.set_confirm_focus(b)
 				else:

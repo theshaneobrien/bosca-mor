@@ -26,6 +26,11 @@ static func enabled(path := "") -> bool:
 	var group := _group(lines)
 	if group.x < 0:
 		return false
+	for line in lines:
+		if line.strip_edges().begins_with("["):
+			break
+		if _is_switch(line):
+			return false   # an older build's key above the group: the whole file is rejected
 	for i in range(group.x + 1, group.y):
 		var l := lines[i].strip_edges()
 		if l == KEY + "=false" or l == "Hidden=true":
@@ -45,12 +50,19 @@ static func set_enabled(on: bool, path := "") -> bool:
 	if group.x < 0:
 		return false   # not a desktop entry; leave it alone
 	# Only [Desktop Entry] is touched: a key above it (after a leading comment,
-	# say) would make the whole file invalid.
-	var at := group.y
-	for i in range(group.y - 1, group.x, -1):
-		var l := lines[i].strip_edges()
-		if l.begins_with(KEY + "=") or l.begins_with("Hidden="):
+	# say) makes the whole file invalid. An older build wrote the switch there,
+	# so take any such line out; no key is valid above the first group.
+	var i := 0
+	while i < lines.size() and not lines[i].strip_edges().begins_with("["):
+		if _is_switch(lines[i]):
 			lines.remove_at(i)
+		else:
+			i += 1
+	group = _group(lines)
+	var at := group.y
+	for k in range(group.y - 1, group.x, -1):
+		if _is_switch(lines[k]):
+			lines.remove_at(k)
 			at -= 1
 	while at > group.x + 1 and lines[at - 1].strip_edges().is_empty():
 		at -= 1
@@ -72,3 +84,8 @@ static func _group(lines: Array[String]) -> Vector2i:
 		elif l.begins_with("["):
 			return Vector2i(head, i)
 	return Vector2i(head, lines.size()) if head >= 0 else Vector2i(-1, -1)
+
+
+static func _is_switch(line: String) -> bool:
+	var l := line.strip_edges()
+	return l.begins_with(KEY + "=") or l.begins_with("Hidden=")

@@ -15,6 +15,11 @@ signal hints_changed(style: String)
 
 var mode := Mode.REMOTE
 var cursor_visible := false
+## Set on each mouse button press, before the press switches the mode: true
+## if the pointer was already in use (pointer mode, cursor showing), so the
+## click acts on what is under it. False: the click acts like Accept on what
+## is focused, since the G20S OK may be a left click with the air mouse on.
+var click_at_pointer := false
 var pad_style := "xbox"
 ## Settings > Controllers: "auto" follows the pad's name, or "xbox", "playstation".
 var glyph_style := "auto"
@@ -63,6 +68,13 @@ func set_glyph_style(s: String) -> void:
 		hints_changed.emit(hint_style())
 
 
+## For screens: whether the mouse press now being handled acts on what is
+## under the pointer (true) or presses the focused item, like Accept (false).
+static func at_pointer(n: Node) -> bool:
+	var im := n.get_node_or_null("/root/InputMode")
+	return im == null or bool(im.click_at_pointer)
+
+
 static func style_for_pad(pad_name: String) -> String:
 	for s in ["DualSense", "DualShock", "PS"]:
 		if pad_name.contains(s):
@@ -94,6 +106,7 @@ func _input(ev: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 	elif ev is InputEventMouseButton:
 		if ev.pressed and not _is_wheel(ev):
+			click_at_pointer = mode == Mode.POINTER and cursor_visible
 			_set_mode(Mode.POINTER)
 			_wake_cursor()
 	elif ev is InputEventMouseMotion:

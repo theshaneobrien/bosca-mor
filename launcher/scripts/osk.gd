@@ -3,8 +3,9 @@
 # pressed again, and !#? swaps the letters for the other symbols, so a Wi-Fi
 # password can be typed with the remote. A physical keyboard types straight
 # into the field; that is the one place characters are read from key events
-# rather than actions (D35). A click presses only the key under the pointer.
-# Settings forwards input here while it is open.
+# rather than actions (D35). With the pointer in use, a click presses only the
+# key under it; any other click is OK on the focused key. Settings forwards
+# input here while it is open.
 extends Control
 
 signal done(text: String)
@@ -12,6 +13,7 @@ signal cancelled
 
 const Tokens := preload("res://theme/tokens.gd")
 const UI := preload("res://scripts/ui.gd")
+const InputModeScript := preload("res://scripts/input_mode.gd")
 
 const SHIFT := "Shift"
 const SYMBOLS_KEY := "!#?"
@@ -102,6 +104,9 @@ func handle(ev: InputEvent) -> bool:
 	if not visible:
 		return false
 	if ev is InputEventMouseButton and ev.is_action_pressed("accept"):
+		if not InputModeScript.at_pointer(self):
+			press(focused_key())
+			return true
 		var k := key_at(ev.position)
 		if k.x >= 0:
 			row = k.x

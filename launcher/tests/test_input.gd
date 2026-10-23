@@ -253,15 +253,51 @@ func test_accept_emits_launch() -> void:
 	_teardown()
 
 
+# Moves the pointer far enough to be in use: pointer mode, cursor showing.
+func _use_pointer(at: Vector2 = Vector2(100, 100), t := 1000) -> void:
+	_mouse_to(at + Vector2(-60, 0), t)
+	_mouse_to(at, t + 50)
+
+
 func test_click_launches_clicked_tile() -> void:
 	await _setup()
 	launched.clear()
+	_use_pointer()
 	_click(_centre(3))
-	eq(im.mode, Mode.POINTER, "click enters pointer mode")
+	eq(im.mode, Mode.POINTER, "still pointer mode")
 	eq(home.focus, 3, "focus follows the click")
 	eq(launched, ["netflix"], "click launches that tile")
+	home.play_return()
 	_click(Vector2(960, 60))
 	eq(launched.size(), 1, "click off the tiles does nothing")
+	_teardown()
+
+
+# The G20S OK may be a left click while the air mouse is on. With the cursor
+# hidden, the click lands wherever the gyro left it: it must act like OK on
+# the tile the remote highlighted, not on the one under the hidden pointer.
+func test_a_click_without_the_pointer_in_use_opens_the_focused_tile() -> void:
+	await _setup()
+	launched.clear()
+	_key(KEY_RIGHT)
+	_key(KEY_RIGHT, false)
+	_click(_centre(3))
+	eq(launched, ["plex"], "remote mode: OK on the focused tile")
+	eq(home.focus, 1, "focus stays where the remote put it")
+	eq(im.mode, Mode.POINTER, "a click still enters pointer mode")
+	home.play_return()
+	_key(KEY_UP)                         # any key: the remote again
+	_click(Vector2(960, 60))
+	eq(launched, ["plex", "plex"], "a click off the tiles too")
+	home.play_return()
+	_use_pointer(Vector2(100, 100), 2000)
+	im._on_hide_timeout()
+	_click(_centre(5))
+	eq(launched, ["plex", "plex", "plex"], "the cursor had hidden: OK on the focused tile")
+	eq(im.cursor_visible, true, "and the click shows the cursor")
+	home.play_return()
+	_click(_centre(5))
+	eq(launched[-1], "browser", "with the cursor showing, the tile under it")
 	_teardown()
 
 
@@ -449,4 +485,48 @@ func test_pad_disconnect_stops_repeat() -> void:
 	eq(home.focus, 1, "no repeat once the pad is gone")
 	check(not im.is_processing(), "no per-frame work left running")
 	im._set_mode(Mode.REMOTE)
+	_teardown()
+
+
+# Review: once keys had scrolled the row, the strip of the tile cut off at
+# the left edge still took hover. Picking it slid the row, another tile came
+# into that strip under the still pointer, and jitter walked focus along
+# (RetroArch, Browser, Plex); a click launched the wrong one.
+func test_the_tile_cut_off_at_the_edge_takes_no_hover() -> void:
+	await _setup()
+	launched.clear()
+	for i in 9:
+		_key(KEY_RIGHT)
+		_key(KEY_RIGHT, false)
+	_finish_tweens()
+	eq(home.focus, 9, "keys moved focus to the last tile")
+	var row_x: float = home._strip_x
+	var p := Vector2(40, _centre(5).y)
+	eq(home.tile_at(p), 5, "Browser shows a strip at the left edge")
+	check(home.tiles[5].get_global_rect().position.x < 0.0, "cut off by the edge")
+	_mouse_to(p + Vector2(60, 0), 1000)    # the gap before the next tile
+	_mouse_to(p, 1050)
+	eq(im.mode, Mode.POINTER, "pointer mode")
+	_rest_with_jitter(p, 1050)
+	eq(home.focus, 9, "hover never picks the cut-off tile")
+	eq(home._strip_x, row_x, "the row did not move")
+	eq(home.tile_at(p), 5, "Browser still under the pointer")
+	_click(p)
+	eq(launched, ["browser"], "a click there still launches it")
+	_teardown()
+
+
+# The wheel can scroll the row under a pointer waiting out its dwell: the
+# tile it was over may then be cut off, and the dwell must not pick it.
+func test_a_dwell_never_picks_a_tile_the_row_moved_off_screen() -> void:
+	await _setup()
+	home.set_focus(9, false)
+	var p := _centre(6)                  # fully on screen
+	_mouse_to(p + Vector2(60, 0), 1000)
+	_mouse_to(p, 1050)
+	eq(home._hover, 6, "dwell started on tile 6")
+	home.set_focus(1, false)             # the row scrolls back to the start
+	im.fake_now_ms = 1400
+	home.resolve_dwell()
+	eq(home.focus, 1, "the dwell let it go")
 	_teardown()
