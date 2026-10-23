@@ -19,6 +19,8 @@ THEME=boscamor-splash
 THEMES="${BOSCAMOR_ROOT:-}/usr/share/plymouth/themes"
 DIR="$THEMES/$THEME"
 LINK="$THEMES/default.plymouth"
+# The default before ours, as "<auto|manual> <theme file>", for --restore.
+SAVED="$DIR/previous-theme"
 GRUB="${BOSCAMOR_ROOT:-}/etc/default/grub"
 DRY=0
 RESTORE=0
@@ -50,9 +52,11 @@ put() {
 	run sudo install -D -m 0644 "$src" "$dest"
 }
 
-current_theme() {
-	update-alternatives --query default.plymouth 2>/dev/null | sed -n 's/^Value: //p'
+query() {
+	update-alternatives --query default.plymouth 2>/dev/null | sed -n "s/^$1: //p"
 }
+current_theme() { query Value; }
+is_theme() { update-alternatives --list default.plymouth 2>/dev/null | grep -qxF "$1"; }
 
 rebuild() {
 	if [ "$CHANGED" = 0 ]; then
@@ -77,12 +81,26 @@ fi
 
 if [ "$RESTORE" = 1 ]; then
 	echo "Restoring Mint's boot splash$([ "$DRY" = 1 ] && echo ' (dry run)')"
-	if update-alternatives --list default.plymouth 2>/dev/null | grep -qx "$DIR/$THEME.plymouth"; then
-		say "remove  $THEME from the Plymouth themes (Mint's becomes the default again)"
+	saved_mode="" saved=""
+	if [ -r "$SAVED" ]; then read -r saved_mode saved < "$SAVED" || true; fi
+	if is_theme "$DIR/$THEME.plymouth"; then
+		say "remove  $THEME from the Plymouth themes"
 		CHANGED=1
 		run sudo update-alternatives --remove default.plymouth "$DIR/$THEME.plymouth"
 	else
 		say "ok      $THEME is not installed"
+	fi
+	# Removing ours picks the highest priority theme left, which need not be
+	# the one chosen before: choose that one again.
+	if [ "$saved_mode" = manual ] && [ -n "$saved" ] \
+		&& { [ "$saved" != "$(current_theme)" ] || [ "$(query Status)" != manual ]; }; then
+		if is_theme "$saved"; then
+			say "set     $saved as the default again"
+			CHANGED=1
+			run sudo update-alternatives --set default.plymouth "$saved"
+		else
+			say "warn    $saved, the default before, is gone; the highest priority theme is used"
+		fi
 	fi
 	if [ -d "$DIR" ]; then
 		say "delete  $DIR"
@@ -161,7 +179,14 @@ put "$DIR/splash.png" "$IMAGE"
 put "$DIR/$THEME.plymouth" "$TMP/$THEME.plymouth"
 put "$DIR/$THEME.script" "$TMP/$THEME.script"
 
-if update-alternatives --list default.plymouth 2>/dev/null | grep -qx "$DIR/$THEME.plymouth"; then
+# Read before --install: in auto mode, installing ours can make it the default.
+BEFORE="$(current_theme)" || BEFORE=""
+if [ -n "$BEFORE" ] && [ "$BEFORE" != "$DIR/$THEME.plymouth" ]; then
+	printf '%s %s\n' "$(query Status)" "$BEFORE" > "$TMP/previous-theme"
+	put "$SAVED" "$TMP/previous-theme"
+fi
+
+if is_theme "$DIR/$THEME.plymouth"; then
 	say "ok      $THEME is a Plymouth theme"
 else
 	say "add     $THEME to the Plymouth themes"
