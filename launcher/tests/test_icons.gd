@@ -4,6 +4,7 @@ const IconResolver := preload("res://scripts/icon_resolver.gd")
 const HomeScene := preload("res://scenes/home.tscn")
 const Apps := preload("res://scripts/apps.gd")
 const Tokens := preload("res://theme/tokens.gd")
+const Loader := preload("res://scripts/loader.gd")
 
 const SVG := '<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48"><rect width="48" height="48" fill="#e50914"/></svg>'
 const WIDE_SVG := '<svg xmlns="http://www.w3.org/2000/svg" width="160" height="90" viewBox="0 0 160 90"><rect width="160" height="90" fill="#e50914"/></svg>'
@@ -145,6 +146,22 @@ func test_png_scaled_to_drawn_size() -> void:
 	_teardown()
 
 
+# Review: halving stopped changing a PNG once it was 1 px thin, and the loop
+# never ended, so Home hung in _ready on a thin drop-in at every login.
+func test_thin_png_does_not_hang() -> void:
+	_setup()
+	var t0 := Time.get_ticks_msec()
+	eq(IconResolver.texture(_png("dropin/bar.png", 1200, 20), 28, "bar").get_size(), Vector2(28, 1), "1200x20 at Settings' 28 px")
+	eq(IconResolver.texture(_png("dropin/line.png", 2000, 3), 175, "line").get_size(), Vector2(175, 1), "2000x3 at Home's 175 px")
+	eq(IconResolver.texture(root.path_join("dropin/bar.png"), 175, "bar").get_size(), Vector2(175, 3), "wide enough to halve twice")
+	var packed := Image.create(256, 256, false, Image.FORMAT_RGBA8)
+	if packed.compress(Image.COMPRESS_S3TC) == OK:
+		IconResolver._shrink(packed, 16, false)
+		eq(packed.get_size(), Vector2i(256, 256), "a compressed image is left as it is")
+	check(Time.get_ticks_msec() - t0 < 2000, "quick")
+	_teardown()
+
+
 # Review: a wide SVG in full style was drawn by its long side, then stretched
 # to cover the tile.
 func test_full_style_svg_covers_by_its_short_side() -> void:
@@ -203,4 +220,29 @@ func test_home_draws_inset_and_full() -> void:
 	eq((plex.get_theme_stylebox("panel") as StyleBoxFlat).bg_color.a, 0.0, "full ignores the tint")
 	check(h._tile(2).get_node("Glyph").visible, "no icon: the glyph")
 	h.free()
+	_teardown()
+
+
+# Review: the loader cut a PNG to the scale it read at start-up, so after
+# Settings moved the TV from 1080p to 4K the icon was stretched 2x and soft.
+func test_loader_icon_follows_display_scale() -> void:
+	_setup()
+	_png("dropin/netflix.png", 1000)
+	var vp := SubViewport.new()
+	vp.size = Tokens.BASE_SIZE
+	vp.size_2d_override = Tokens.BASE_SIZE
+	vp.size_2d_override_stretch = true
+	tree.root.add_child(vp)
+	var l: Control = Loader.new()
+	vp.add_child(l)
+	var app := {"id": "netflix", "name": "Netflix", "argv": ["firefox"], "icon": "", "url": ""}
+	l.start(app)
+	var px := roundi(Tokens.TILE * Tokens.ICON_INSET)
+	eq(l._icon.texture.get_width(), px, "1080p")
+	l.stop()
+	vp.size = Tokens.BASE_SIZE * 2                 # Settings picked 4K
+	l.start(app)
+	eq(l._icon.texture.get_width(), px * 2, "4K: cut for the scale now")
+	l.stop()
+	vp.free()
 	_teardown()

@@ -257,11 +257,17 @@ func test_off_the_box_nothing_runs() -> void:
 
 
 func test_headless_runs_nothing() -> void:
-	# Tests and other headless runs never reach the real xrandr or pactl, even
-	# on a Linux desktop, so no test can start a real job before its fake runner.
+	# Review: on Windows the old check passed whatever the gate said, and
+	# `godot --path launcher` on a Linux desktop really ran xrandr and pactl.
+	check(SystemSetup.can_run("Linux", ":0", "X11", true), "the exported build on the box")
+	check(not SystemSetup.can_run("Linux", ":0", "X11", false), "godot --path on a Linux desktop, and shots")
+	check(not SystemSetup.can_run("Linux", ":0", "headless", true), "headless")
+	check(not SystemSetup.can_run("Linux", "", "X11", true), "no X display")
+	check(not SystemSetup.can_run("Windows", ":0", "Windows", true), "not Linux")
+	# Tests never run from an exported build, so no test starts a real job
+	# before its fake runner, on any machine.
 	var s: Node = SystemSetup.new()
-	if DisplayServer.get_name() == "headless":
-		check(not s.enabled, "off")
+	check(not s.enabled, "off in the tests")
 	s.free()
 
 

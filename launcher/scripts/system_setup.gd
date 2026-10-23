@@ -23,10 +23,11 @@ signal picture_done(result: Dictionary)
 ## Joining a Wi-Fi network finished: Network.join's result.
 signal wifi_done(result: Dictionary)
 
-## Linux with an X display. Off it (the dev machine, and headless runs such
-## as the tests) nothing runs. BOSCAMOR_DRY_RUN=1 logs changes instead.
-var enabled := OS.get_name() == "Linux" and not OS.get_environment("DISPLAY").is_empty() \
-	and DisplayServer.get_name() != "headless"
+## On only in an exported build (what deploy.sh ships to the box) on Linux
+## with an X display: see can_run. Elsewhere nothing runs. BOSCAMOR_DRY_RUN=1
+## logs changes instead.
+var enabled := can_run(OS.get_name(), OS.get_environment("DISPLAY"), DisplayServer.get_name(),
+	OS.has_feature("template"))
 ## Tests run jobs on the calling thread with a fake runner.
 var threaded := true
 var run: Callable = run_command
@@ -46,6 +47,14 @@ var _running := ""                # the kind of job on the worker
 var _boot_left := 0
 var _volume_done := false
 var _timer: Timer
+
+
+## Whether picture, sound and Wi-Fi may be changed. Only an exported build
+## (template) may: `godot --path launcher` on a Linux desktop, shots and tests
+## leave the dev machine's screen and sound alone, and so does a headless run
+## or one without an X display.
+static func can_run(os_name: String, display: String, server: String, template: bool) -> bool:
+	return template and os_name == "Linux" and not display.is_empty() and server != "headless"
 
 
 func _ready() -> void:

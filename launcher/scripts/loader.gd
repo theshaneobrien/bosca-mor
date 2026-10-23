@@ -19,7 +19,6 @@ var _name: Label
 var _dots: Array[Panel] = []
 var _delay: Timer
 var _pulse: Tween
-var _scale := 1.0
 
 
 func _ready() -> void:
@@ -27,7 +26,6 @@ func _ready() -> void:
 	visible = false
 	_build()
 	UI.ignore_mouse(self)
-	_scale = UI.display_scale(self)
 	_delay = Timer.new()
 	_delay.one_shot = true
 	_delay.timeout.connect(reveal)
@@ -70,16 +68,18 @@ func _fill(app: Dictionary) -> void:
 	var tint: Color = app.get("tint", Tokens.SURFACE)
 	var accent: Color = app.get("accent", Tokens.TEXT)
 	_tile.add_theme_stylebox_override("panel", UI.box(tint, Tokens.TILE_RADIUS))
+	# The scale now, not at start-up: Settings can change the TV mode since.
+	var s := UI.display_scale(self)
 	var tex: Texture2D = null
 	if app.has("argv"):
 		var found := IconResolver.find(app)
 		if found:
-			tex = IconResolver.texture(found.path, roundi(Tokens.TILE * Tokens.ICON_INSET * _scale), app.get("id", "app") + "-loader")
+			tex = IconResolver.texture(found.path, roundi(Tokens.TILE * Tokens.ICON_INSET * s), app.get("id", "app") + "-loader")
 	if tex:
 		_icon.texture = tex
 		_icon.custom_minimum_size = Vector2.ONE * Tokens.TILE * Tokens.ICON_INSET
 	else:
-		_icon.texture = Glyphs.texture(Glyphs.name_for(app), accent, Tokens.GLYPH, Tokens.GLYPH_STROKE, _scale)
+		_icon.texture = Glyphs.texture(Glyphs.name_for(app), accent, Tokens.GLYPH, Tokens.GLYPH_STROKE, s)
 		_icon.custom_minimum_size = Vector2.ONE * Tokens.GLYPH
 
 
