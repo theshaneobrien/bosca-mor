@@ -305,6 +305,8 @@ func test_display_prefs_persist() -> void:
 	await _setup()
 	_act("nav_down")
 	_act("nav_right")
+	eq(st._current().key, "display_mode", "Picture first")
+	_act("nav_down")
 	eq(st._current().key, "ui_scale", "Screen size row")
 	_act("accept")
 	eq(main.scale, Vector2.ONE * 0.95, "UI shrinks to 95%")

@@ -32,6 +32,8 @@ signal app_window(app_id: String)
 ## The launched app showed no window within LAUNCH_TIMEOUT: the daemon said
 ## so, or the launcher's own deadline passed first (D63). Emitted once.
 signal launch_timed_out(app_id: String)
+## OK on a remote whose key X doesn't map (KEY_OK, KEY_SELECT, D82).
+signal accept_pressed
 signal connected_changed(connected: bool)
 
 ## Seconds before the stand-in pretends an app exited or a power-off was a
@@ -77,7 +79,8 @@ func _ready() -> void:
 func launch(app: Dictionary) -> void:
 	_record(["launch", app.id])
 	waiting_id = app.id
-	_window_deadline = _now_ms() + int(Tokens.LAUNCH_TIMEOUT * 1000.0)
+	# After the daemon's own 15 s, plus the wait before it shows the window (D77).
+	_window_deadline = _now_ms() + int(Tokens.LAUNCH_BACKUP * 1000.0)
 	if not _send({"cmd": "launch", "id": app.id, "argv": Apps.argv_for(app),
 			"keep_on_home": app.get("keep_on_home", false)}):
 		if not stand_in:
@@ -188,7 +191,7 @@ func _timed_out(app_id: String) -> void:
 	if app_id != waiting_id:
 		return       # already timed out here, or an older launch
 	waiting_id = ""
-	print("no window from %s within %d s" % [app_id, int(Tokens.LAUNCH_TIMEOUT)])
+	print("no window from %s in time" % app_id)
 	launch_timed_out.emit(app_id)
 
 
@@ -297,6 +300,8 @@ func _dispatch(msg: Dictionary) -> void:
 		"still_open":
 			var list = msg.get("apps", [])
 			still_open.emit(list if list is Array else [])
+		"accept":
+			accept_pressed.emit()
 		"memory_warning":
 			var app_id = msg.get("id")
 			memory_warning.emit("" if app_id == null else str(app_id), int(msg.get("available_mb", 0)))

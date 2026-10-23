@@ -127,6 +127,18 @@ class TestKeys(DaemonCase):
         self.assertEqual(self.d.events("power_confirm"), [{"evt": "power_confirm"}])
         self.assertEqual(self.d.ran, [])
 
+    def test_ok_key_is_accept_while_the_launcher_shows(self):
+        # G20S with the air mouse off (box test): OK may send KEY_OK or
+        # KEY_SELECT, which X gives the launcher no key for (D82).
+        self.d.visible = True
+        self.d.on_key("kbd", bi.KEY_OK, 1)
+        self.d.on_key("kbd", bi.KEY_SELECT, 1)
+        self.d.on_key("kbd", bi.KEY_OK, 0)
+        self.assertEqual(self.d.events("accept"), [{"evt": "accept"}] * 2)
+        self.d.visible = False
+        self.d.on_key("kbd", bi.KEY_OK, 1)
+        self.assertEqual(len(self.d.events("accept")), 2, "not while an app is in front")
+
     def test_repeats_and_releases_ignored(self):
         self.d.on_key("kbd", bi.KEY_POWER, 2)
         self.d.on_key("kbd", bi.KEY_HOMEPAGE, 0)

@@ -12,6 +12,7 @@ const COPY := {
 	"restart": {"title": "Restart this device?", "body": "The launcher opens again once it is back.", "verb": "Restart", "glyph": "restart"},
 	"forceclose": {"title": "Close %d apps?", "one": "Close 1 app?", "body": "Unsaved work will be lost.", "verb": "Close anyway", "glyph": "close"},
 	"remove": {"title": "Remove %s?", "body": "It comes off Home. You can add it again from Add app.", "verb": "Remove", "glyph": "close"},
+	"picture": {"title": "Keep this picture?", "body": "It goes back to the last one in %d seconds.", "verb": "Keep", "glyph": "desktop"},
 }
 
 var is_open := false
@@ -43,7 +44,7 @@ func open(k: String, animate: bool, count := 0, subject := "") -> void:
 		_title.text = copy.title % subject
 	else:
 		_title.text = copy.one if count == 1 and copy.has("one") else (copy.title % count if copy.title.contains("%d") else copy.title)
-	_body.text = copy.body
+	_body.text = copy.body % int(Tokens.PICTURE_KEEP) if copy.body.contains("%d") else copy.body
 	_buttons[1].get_node("Label").text = copy.verb
 	set_focus(0)
 	_dialog.reset_size()

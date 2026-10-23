@@ -1,0 +1,4 @@
+wifi:connected:HomeNet
+ethernet:unavailable:
+loopback:connected (externally):lo
+wifi-p2p:disconnected:

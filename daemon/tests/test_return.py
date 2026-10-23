@@ -27,6 +27,7 @@ class FakeX(Recorder):
         self.app_dirs = [APPS]
         self.clock = 1000.0
         self.xprop_calls = 0
+        self.list_calls = 0
         self.active = None
 
     def run_capture(self, argv):
@@ -34,6 +35,7 @@ class FakeX(Recorder):
         if argv[:3] == ["xprop", "-root", "_NET_ACTIVE_WINDOW"]:
             return "_NET_ACTIVE_WINDOW(WINDOW): window id # %s\n" % (self.active or "0x0")
         if argv[:2] == ["xprop", "-root"]:
+            self.list_calls += 1
             return "_NET_CLIENT_LIST(WINDOW): window id # " + ", ".join(self.open_windows) + "\n"
         if argv[:2] == ["xprop", "-id"]:
             return read(bi.norm_wid(argv[2]) + ".txt")
@@ -106,10 +108,10 @@ class TestReturnFlow(unittest.TestCase):
         d.tick()
         self.assertEqual(d.sent, [{"evt": "show"}])
         self.assertIsNone(d.returning, "polling stops early")
-        calls = d.xprop_calls
+        calls = d.list_calls
         d.clock = 1003.0
         d.tick()
-        self.assertEqual(d.xprop_calls, calls, "no polls after it stopped")
+        self.assertEqual(d.list_calls, calls, "no window-list polls after it stopped")
 
     def test_still_open_after_five_seconds(self):
         d = self.d

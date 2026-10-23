@@ -43,10 +43,12 @@ signal still_focus_changed(i: int)
 signal force_close_confirmed
 ## Remove was confirmed for the app Settings asked about.
 signal remove_confirmed
+## Keep was chosen for the picture Settings is trying (D79).
+signal picture_kept
 
 var screen := Screen.HOME
 var sidebar_focus := 0
-var confirm_kind := "poweroff"     # or "restart", "forceclose"
+var confirm_kind := "poweroff"     # or "restart", "forceclose", "remove", "picture"
 var confirm_focus := 0              # 0 Cancel, 1 the action
 var still_focus := 0                # 0 Show me, 1 Close anyway, 2 Back to desktop
 ## Why the desktop is showing: "menu" (sidebar Desktop: notify), "show_me"
@@ -171,17 +173,26 @@ func _confirm_run() -> void:
 	elif confirm_kind == "remove":
 		remove_confirmed.emit()
 		go(Screen.SETTINGS)
+	elif confirm_kind == "picture":
+		picture_kept.emit()
+		go(Screen.SETTINGS)
 	else:
 		go(Screen.OFF)
 
 
 # Cancel or Back: the force-close confirm returns to Still open, the remove
-# confirm to Settings (D73), the power confirms to the sidebar.
+# and picture confirms to Settings (D73, D79), the power confirms to the sidebar.
 func _to_sidebar() -> void:
 	match confirm_kind:
 		"forceclose": go(Screen.STILL_OPEN)
-		"remove": go(Screen.SETTINGS)
+		"remove", "picture": go(Screen.SETTINGS)
 		_: go(Screen.SIDEBAR)
+
+
+## What Cancel does, without a press: the picture confirm ran out of time.
+func cancel_confirm() -> void:
+	if screen == Screen.CONFIRM:
+		_to_sidebar()
 
 
 func _still_left() -> void:

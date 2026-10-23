@@ -1,0 +1,7 @@
+*:82:WPA2:HomeNet
+:79:WPA2:HomeNet
+:64:WPA1 WPA2:Upstairs\:5G
+:50:WPA2:Old Flat
+:40::Cafe Free
+:20:WPA2 802.1X:Work
+:55:WPA2:

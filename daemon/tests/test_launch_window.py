@@ -46,11 +46,14 @@ class TestFirstWindow(LaunchCase):
         self.assertEqual(self.d.events("app_window"), [])
         self.d.open_windows.append(PLEX)
         self.at(1.0)
+        self.assertEqual(self.d.events("app_window"), [], "seen, but kept behind the black launcher (D77)")
+        self.assertNotIn(["wmctrl", "-i", "-a", bi.norm_wid(PLEX)], self.d.ran)
+        self.at(1.0 + bi.APP_REVEAL_S)
         self.assertEqual(self.d.events("app_window"), [{"evt": "app_window", "id": "plex"}])
         self.assertIn(["wmctrl", "-i", "-a", bi.norm_wid(PLEX)], self.d.ran,
-                      "raised above the waiting launcher (D65)")
+                      "then raised above the waiting launcher (D65)")
         self.d.active = PLEX          # Plex took the focus
-        self.at(1.5)
+        self.at(1.5 + bi.APP_REVEAL_S)
         self.assertIsNone(self.d.app.activate_until, "focus hand-off done")
         calls = self.d.xprop_calls
         self.at(1.5)
@@ -71,12 +74,24 @@ class TestFirstWindow(LaunchCase):
         self.assertEqual(self.d.events("app_window"), [])
         self.d.open_windows.append(PLEX)
         self.at(1.0)
+        self.at(1.0 + bi.APP_REVEAL_S)
         self.assertEqual(len(self.d.events("app_window")), 1)
 
     def test_splash_counts(self):
         self.d.open_windows.append(SPLASH)
         self.at(0.5)
+        self.at(0.5 + bi.APP_REVEAL_S)
         self.assertEqual(len(self.d.events("app_window")), 1)
+
+    def test_app_that_exits_during_the_reveal_wait_is_not_raised(self):
+        self.d.open_windows.append(PLEX)
+        self.at(1.0)
+        self.d.app.proc.kill()
+        self.d.app.proc.wait()
+        self.at(1.1)
+        self.at(1.0 + bi.APP_REVEAL_S)
+        self.assertEqual(self.d.events("app_window"), [])
+        self.assertNotIn(["wmctrl", "-i", "-a", bi.norm_wid(PLEX)], self.d.ran)
 
     def test_polls_every_half_second(self):
         calls = self.d.xprop_calls
@@ -178,23 +193,72 @@ class TestFocusHandOff(LaunchCase):
         self.d.open_windows.append(PLEX)
         self.d.active = LAUNCHER      # Muffin left the focus on the launcher
         self.at(0.5)
+        r = bi.APP_REVEAL_S
+        self.at(0.5 + r)
         self.assertEqual(len(self.raises()), 1)
-        self.at(1.0)
-        self.at(1.5)
+        self.at(1.0 + r)
+        self.at(1.5 + r)
         self.assertEqual(len(self.raises()), 3, "again every 500 ms")
         self.d.active = PLEX
-        self.at(2.0)
-        self.at(2.5)
+        self.at(2.0 + r)
+        self.at(2.5 + r)
         self.assertEqual(len(self.raises()), 3, "stops once Plex has the focus")
         self.assertIsNone(self.d.app.activate_until)
 
     def test_gives_up_after_three_seconds(self):
         self.d.open_windows.append(PLEX)
         self.d.active = LAUNCHER
-        for i in range(1, 12):
+        for i in range(1, 16):
             self.at(0.5 * i)
         self.assertIsNone(self.d.app.activate_until, "gave up")
         n = len(self.raises())
         self.at(8.0)
         self.assertEqual(len(self.raises()), n, "no more tries")
         self.assertLessEqual(n, 1 + int(bi.ACTIVATE_FOR_S / bi.ACTIVATE_EVERY_S))
+
+
+class TestLauncherFocus(unittest.TestCase):
+    """Box test: at login the launcher took no keys until it was clicked.
+    The daemon keeps activating it until it has the focus (D78)."""
+
+    def setUp(self):
+        self.d = FakeX()
+        self.d.open_windows.append(LAUNCHER)
+
+    def tearDown(self):
+        self.d.close()
+
+    def raises(self):
+        return [r for r in self.d.ran if r == ["wmctrl", "-F", "-a", bi.LAUNCHER_TITLE]]
+
+    def test_activates_the_launcher_when_it_connects(self):
+        self.d.active = "0x1c00003"   # the desktop has the focus at login
+        self.d.handle({"cmd": "state", "visible": True})
+        for i in range(4):
+            self.d.clock = 1000.0 + 0.5 * i
+            self.d.tick()
+        self.assertEqual(len(self.raises()), 4, "every 500 ms while the desktop has it")
+        self.d.active = LAUNCHER
+        self.d.clock = 1002.0
+        self.d.tick()
+        self.d.clock = 1003.0
+        self.d.tick()
+        self.assertEqual(len(self.raises()), 4, "stops once the launcher has the focus")
+        self.assertIsNone(self.d.focus_until)
+
+    def test_gives_up_after_a_while(self):
+        self.d.active = "0x1c00003"
+        self.d.handle({"cmd": "state", "visible": True})
+        for i in range(0, 40):
+            self.d.clock = 1000.0 + 0.5 * i
+            self.d.tick()
+        self.assertIsNone(self.d.focus_until)
+        self.assertLessEqual(len(self.raises()), 1 + int(bi.LAUNCHER_FOCUS_S / bi.ACTIVATE_EVERY_S))
+
+    def test_hidden_launcher_is_left_alone(self):
+        self.d.active = "0x1c00003"
+        self.d.handle({"cmd": "state", "visible": True})
+        self.d.handle({"cmd": "state", "visible": False})   # an app is opening
+        self.d.clock = 1001.0
+        self.d.tick()
+        self.assertEqual(self.raises(), [])

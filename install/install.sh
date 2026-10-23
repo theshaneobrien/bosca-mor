@@ -20,7 +20,7 @@ DEST="$SYS/opt/boscamor"
 SPOTIFY_KEY_URL="https://download.spotify.com/debian/pubkey_C85668DF69375001.gpg"
 MA_RELEASES="https://api.github.com/repos/music-assistant/desktop-app/releases/latest"
 MA_ID="io.music_assistant.Companion"
-APT_PACKAGES=(wmctrl evtest flatpak x11-utils libnotify-bin python3 firefox sysstat intel-gpu-tools curl)
+APT_PACKAGES=(wmctrl evtest flatpak x11-utils x11-xserver-utils pulseaudio-utils network-manager libnotify-bin python3 firefox sysstat intel-gpu-tools curl)
 
 DRY=0
 APPS=1

@@ -1,0 +1,5 @@
+Server String: /run/user/1000/pulse/native
+Library Protocol Version: 35
+Server Name: PulseAudio (on PipeWire 1.0.5)
+Default Sink: alsa_output.pci-0000_00_0e.0.analog-stereo
+Default Source: alsa_input.pci-0000_00_0e.0.analog-stereo

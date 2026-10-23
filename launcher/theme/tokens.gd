@@ -205,6 +205,14 @@ const LOADER_DOT_STEP := 0.25       # each dot's rise and fall
 const LOADER_DOT_DIM := 0.25
 const LOADER_FPS := 30              # frame cap while it shows, to leave the CPU to the app
 
+# TV picture and sound (D79, D80)
+const SETUP_CHECK_EVERY := 5.0      # seconds between checks after login
+const SETUP_BOOT_CHECKS := 7        # at login, then every 5 s: the first 30 s
+const SETUP_CMD_TIMEOUT := 5        # seconds before a stuck xrandr or pactl is stopped
+const PICTURE_KEEP := 15.0          # a new picture goes back unless it is kept by then
+const WIFI_SCAN_TIMEOUT := 15       # D81: seconds for nmcli to list networks (a rescan takes a few)
+const WIFI_CONNECT_TIMEOUT := 45    # and to join one
+
 # Toast (D62: no design; built from the dialog, button and menu tokens)
 const TOAST_HEIGHT := BUTTON
 const TOAST_PAD := STILL_ROW_PAD
@@ -234,6 +242,8 @@ const CONFIRM_SCALE_FROM := 0.96
 const REPEAT_DELAY := 0.400
 const REPEAT_RATE := 0.110
 const LAUNCH_TIMEOUT := 15.0
+const APP_REVEAL := 2.0             # D77: the daemon leaves a new app window behind the launcher this long
+const LAUNCH_BACKUP := LAUNCH_TIMEOUT + APP_REVEAL + 1.0   # the launcher's own deadline, after the daemon's
 const FOCUS_SAVE_DELAY := 2.0       # D61: Home saves the focused tile once it rests this long
 
 # Input (SPEC Input model)

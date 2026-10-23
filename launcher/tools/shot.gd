@@ -3,7 +3,9 @@
 # godot --path launcher -s res://tools/shot.gd -- --state=home --size=1920x1080 --out=../shots/home.png
 # States: home, menu (as Menu.dc.html), power and restart (as Power.dc.html),
 # settings (as Settings.dc.html; --section=N --row=N pick another), osk,
-# stillopen (as StillOpen.dc.html), forceclose (its confirm), toast (D62: no design).
+# stillopen (as StillOpen.dc.html), forceclose (its confirm), toast (D62: no design),
+# picture (the keep confirm over Settings > Display, D79). Settings' Display,
+# Sound and Network rows show the test fixtures' TV, sound card and networks.
 # Options: --focus=N (focused tile), --item=N (sidebar item), --apps=PATH
 # (apps.json to use), --hints=remote|xbox|playstation (hint key style)
 extends SceneTree
@@ -12,14 +14,29 @@ const Tokens := preload("res://theme/tokens.gd")
 const MainScene := preload("res://scenes/main.tscn")
 const InputModeScript := preload("res://scripts/input_mode.gd")
 const Motion := preload("res://scripts/motion.gd")
-const STATES := ["home", "menu", "power", "restart", "settings", "osk", "stillopen", "forceclose", "loading", "toast"]
+const STATES := ["home", "menu", "power", "restart", "settings", "osk", "stillopen", "forceclose", "loading", "toast", "picture"]
+const FIX := "res://tests/fixtures/"
+# What xrandr, pactl and nmcli say, from the test fixtures.
+const FAKE := {
+	"xrandr --query": "xrandr/box.txt", "xrandr --current": "xrandr/box.txt",
+	"pactl list cards": "pactl/cards.txt", "pactl list short sinks": "pactl/short_sinks_hdmi2.txt",
+	"pactl info": "pactl/info.txt",
+	"nmcli -t -f TYPE,STATE,CONNECTION device": "nmcli/devices.txt",
+	"nmcli -t -f IN-USE,SIGNAL,SECURITY,SSID device wifi list --rescan auto": "nmcli/wifi_list.txt",
+	"nmcli -t -f NAME,TYPE connection show": "nmcli/saved.txt",
+}
 # The two windows in the design's Still open screen.
 const STILL := [
 	{"wid": "0x3a00007", "name": "LibreOffice Writer", "icon": "libreoffice-writer", "asking": true},
 	{"wid": "0x4400002", "name": "Text Editor", "icon": "accessories-text-editor", "asking": false},
 ]
 # Defaults that match the design references.
-const FOCUS := {"home": 0, "menu": 2, "power": 0, "restart": 0, "settings": 0, "osk": 0, "stillopen": 0, "forceclose": 0, "toast": 2, "loading": 1}
+const FOCUS := {"home": 0, "menu": 2, "power": 0, "restart": 0, "settings": 0, "osk": 0, "stillopen": 0, "forceclose": 0, "toast": 2, "loading": 1, "picture": 0}
+
+
+static func _fake_run(argv: Array, _limit := 0, _stderr := false) -> Dictionary:
+	var key := " ".join(argv)
+	return {"code": 0, "out": FileAccess.get_file_as_string(FIX + FAKE[key]) if FAKE.has(key) else ""}
 
 
 func _initialize() -> void:
@@ -58,6 +75,10 @@ func _shoot() -> void:
 	vp.add_child(main)
 	main.animate = false
 	main.daemon.stub_delay = -1.0
+	main.setup.enabled = true
+	main.setup.threaded = false
+	main.setup.run = _fake_run
+	main.setup.check(true)
 	main.home.set_focus(int(opts.focus) if opts.focus else FOCUS.get(opts.state, 0), false)
 	await _frames()
 
@@ -68,6 +89,12 @@ func _shoot() -> void:
 			main.state.set_sidebar_focus(int(opts.item))
 		"power", "restart":
 			main.state.ask("poweroff" if opts.state == "power" else "restart")
+		"picture":
+			main.state.go(main.State.Screen.SETTINGS)
+			main.settings.section = 1
+			main.settings._enter()
+			main.settings._render()
+			main.state.ask("picture")
 		"settings", "osk":
 			main.state.go(main.State.Screen.SETTINGS)
 			var st = main.settings

@@ -1,0 +1,29 @@
+Card #46
+	Name: alsa_card.pci-0000_00_0e.0
+	Driver: alsa
+	Owner Module: n/a
+	Properties:
+		api.alsa.card = "0"
+		device.bus = "pci"
+		device.description = "Built-in Audio"
+		device.name = "alsa_card.pci-0000_00_0e.0"
+	Profiles:
+		off: Off (sinks: 0, sources: 0, priority: 0, available: yes)
+		output:analog-stereo+input:analog-stereo: Analog Stereo Duplex (sinks: 1, sources: 1, priority: 6565, available: yes)
+		output:analog-stereo: Analog Stereo Output (sinks: 1, sources: 0, priority: 6500, available: yes)
+		output:hdmi-stereo: Digital Stereo (HDMI) Output (sinks: 1, sources: 0, priority: 5900, available: no)
+		output:hdmi-stereo+input:analog-stereo: Digital Stereo (HDMI) Output + Analog Stereo Input (sinks: 1, sources: 1, priority: 5965, available: no)
+		output:hdmi-stereo-extra1: Digital Stereo (HDMI 2) Output (sinks: 1, sources: 0, priority: 5700, available: yes)
+		output:hdmi-stereo-extra2: Digital Stereo (HDMI 3) Output (sinks: 1, sources: 0, priority: 5700, available: no)
+		pro-audio: Pro Audio (sinks: 4, sources: 1, priority: 1, available: yes)
+	Active Profile: output:analog-stereo+input:analog-stereo
+	Ports:
+		analog-output-headphones: Headphones (type: Headphones, priority: 9900, latency offset: 0 usec, availability group: Legacy 2, not available)
+			Properties:
+				port.type = "headphones"
+			Part of profile(s): output:analog-stereo+input:analog-stereo, output:analog-stereo
+		hdmi-output-1: HDMI / DisplayPort 2 (type: HDMI, priority: 5800, latency offset: 0 usec, availability group: Legacy 5, available)
+			Properties:
+				port.type = "hdmi"
+				device.product.name = "TV"
+			Part of profile(s): output:hdmi-stereo-extra1

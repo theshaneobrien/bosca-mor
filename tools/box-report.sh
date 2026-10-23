@@ -66,6 +66,7 @@ report() {
 	section "Cinnamon" cinnamon --version
 	section "Session type (want x11)" printenv XDG_SESSION_TYPE XDG_CURRENT_DESKTOP DISPLAY
 	section "Screen" xrandr --current
+	section "Screen, read again from the TV" xrandr --query
 	section "Python (daemon needs 3)" python3 --version
 
 	echo "  tools the launcher uses"
@@ -114,6 +115,15 @@ report() {
 	echo "  network (About, Wi-Fi icon)"
 	section "Addresses" ip -br addr
 	section "Wireless" cat /proc/net/wireless
+	section "Network devices (nmcli)" nmcli -t -f TYPE,STATE,CONNECTION device
+	# Network names are left out: they are the neighbours' too.
+	section "Wi-Fi networks in range, names left out" sh -c 'nmcli -t -f IN-USE,SIGNAL,SECURITY,SSID device wifi list | awk -F: "{ print \$1 \":\" \$2 \":\" \$3 \":network-\" NR }"'
+
+	echo "  sound (Settings > Sound, D80)"
+	section "Sound server" pactl info
+	section "Sound cards" pactl list cards
+	section "Sound outputs" pactl list short sinks
+	section "Launcher picture, sound and Wi-Fi log" sh -c 'grep -h -E "^(picture|sound|wifi): " "$HOME/.xsession-errors" | tail -n 40'
 	section "Hostname" cat /etc/hostname
 
 	echo "  open windows (xprop fixtures for Return to the launcher)"
@@ -153,9 +163,10 @@ NAMES = {1: "KEY_ESC", 14: "KEY_BACKSPACE", 28: "KEY_ENTER", 57: "KEY_SPACE", 10
          307: "BTN_NORTH", 308: "BTN_WEST", 314: "BTN_SELECT", 315: "BTN_START", 316: "BTN_MODE (Guide)",
          352: "KEY_OK", 353: "KEY_SELECT", 582: "KEY_VOICECOMMAND"}
 PROMPTS = [
-    "Remote: Home", "Remote: Back", "Remote: Menu", "Remote: OK", "Remote: Up", "Remote: Down",
+    "Remote: Home", "Remote: Back", "Remote: Menu", "Remote: OK with the air mouse on", "Remote: Up", "Remote: Down",
     "Remote: Left", "Remote: Right", "Remote: Volume up", "Remote: Volume down", "Remote: Mute",
     "Remote: Voice or microphone (skip if none)", "Remote: any other button (skip if none)",
+    "Remote: OK with the air mouse off (turn it off with the remote's mouse button first, and back on after)",
     "Pad: Guide (the logo button)", "Pad: A", "Pad: B", "Pad: Start", "Pad: Y",
     "Remote: Power. ONLY if the installer has run and you have rebooted, or the box may shut down. Otherwise skip",
 ]
@@ -201,6 +212,7 @@ for prompt in PROMPTS:
     end = time.time() + 20
     got = None
     scan = None
+    scan_only = []      # a button the kernel has no key for sends only its scancode
     while time.time() < end and not got:
         r, _, _ = select.select(list(fds) + [sys.stdin], [], [], 0.5)
         if sys.stdin in r:
@@ -211,12 +223,19 @@ for prompt in PROMPTS:
                 data = os.read(fd, EVENT.size * 64)
             except OSError:
                 continue
+            pending = None
             for i in range(0, len(data) - len(data) % EVENT.size, EVENT.size):
                 _, _, t, c, v = EVENT.unpack_from(data, i)
                 if t == 4 and c == 4:
                     scan = v
-                elif t == 1 and v == 1 and not got:
-                    got = (fds[fd], c)
+                    pending = v
+                elif t == 1:
+                    pending = None
+                    if v == 1 and not got:
+                        got = (fds[fd], c)
+                elif t == 0 and c == 0 and pending is not None:
+                    scan_only.append("0x%x from %s" % (pending, names.get(fds[fd], fds[fd])))
+                    pending = None
     if got:
         dev, code = got
         line = "%s | %s | %d | %s | %s" % (prompt.split(".")[0], names.get(dev, dev), code,
@@ -225,6 +244,10 @@ for prompt in PROMPTS:
     else:
         line = "%s | skipped" % prompt.split(".")[0]
         print("skipped")
+    if scan_only:
+        # The kernel saw a button but has no key for it (a hwdb remap fixes that).
+        line += " | no key, only scancode " + ", ".join(scan_only)
+        print("  (no key, only scancode %s)" % ", ".join(scan_only))
     out.write(line + "\n")
     out.flush()
 

@@ -1,8 +1,9 @@
 # Settings: a section list on the left and the chosen section on the right.
 # Apps edits apps.json (show or hide, reorder, the Browser start page, add
-# from installed .desktop entries); Display, Controllers and Startup change
-# preferences; Network and Sound open Cinnamon's own panels like an app;
-# About shows this device. Navigation per the SPEC table's Settings column:
+# from installed .desktop entries); Display, Sound, Controllers and Startup
+# change preferences (the TV picture and sound through SystemSetup, D79,
+# D80); Network lists and joins Wi-Fi networks (D81); Network and Sound also
+# open Cinnamon's own panels like an app; About shows this device. Navigation per the SPEC table's Settings column:
 # Left goes to the section list, Right goes into content, Back goes up one
 # level and at the top returns Home.
 extends Control
@@ -13,6 +14,10 @@ signal prefs_changed(prefs: Dictionary)
 signal launch_panel(app: Dictionary)
 ## Remove was chosen on an app row; Main asks to confirm, then calls remove_app.
 signal remove_requested(app: Dictionary)
+## The next Picture was chosen; Main tries it and asks to keep it (D79).
+signal picture_requested(mode: String)
+## Something for Main to show as a toast.
+signal wifi_message(text: String)
 
 const Tokens := preload("res://theme/tokens.gd")
 const Glyphs := preload("res://scripts/glyphs.gd")
@@ -26,6 +31,9 @@ const HintBar := preload("res://scripts/hint_bar.gd")
 const OSK := preload("res://scripts/osk.gd")
 const IconResolver := preload("res://scripts/icon_resolver.gd")
 const Paths := preload("res://scripts/paths.gd")
+const Display := preload("res://scripts/display.gd")
+const Sound := preload("res://scripts/sound.gd")
+const Network := preload("res://scripts/network.gd")
 
 const SECTIONS := [
 	["apps", "Apps"], ["display", "Display"], ["network", "Network"], ["sound", "Sound"],
@@ -34,9 +42,9 @@ const SECTIONS := [
 const HEADS := {
 	"apps": ["Apps on Home", "Shown left to right in this order."],
 	"picker": ["Add an app", "Flatpak apps on this device, or a website."],
-	"display": ["Display", "How the launcher looks on the TV."],
-	"network": ["Network", "Wi-Fi and wired connections open in the desktop's own settings."],
-	"sound": ["Sound", "Speakers and volume open in the desktop's own settings."],
+	"display": ["Display", "The TV picture, and how the launcher looks on it."],
+	"network": ["Network", "Wi-Fi networks in range. Everything else is in the desktop's own settings."],
+	"sound": ["Sound", "Where the sound plays and how loud it starts."],
 	"controllers": ["Controllers", "Which button names the hints show for a game pad."],
 	"startup": ["Startup", "What happens when this device starts."],
 	"about": ["About", "This device and the launcher."],
@@ -63,6 +71,8 @@ var profiles_dir := ""
 var accepting_input := false
 ## The daemon's last memory warning, for About.
 var memory_note := ""
+## SystemSetup, for what the TV and sound are doing now. Null: rows hidden.
+var setup: Node = null
 
 var section := 0
 var level := "nav"          # nav, content or picker
@@ -78,8 +88,9 @@ var _entries: Array = []    # picker: installed apps not yet on Home
 var _items: Array = []      # content items for the current level
 var _scroll := 0
 var _scale := 1.0
-var _osk_for := ""          # what the keyboard is typing: url, site_name or site_url
+var _osk_for := ""          # what the keyboard is typing: url, site_name, site_url or wifi_password
 var _site_name := ""
+var _wifi_net := {}         # the network the keyboard is typing a password for
 
 var _hints: HBoxContainer
 var _nav: VBoxContainer
@@ -227,6 +238,12 @@ func _accept() -> void:
 			_change(it.key)
 		"button":
 			launch_panel.emit(PANELS[section_id()])
+		"wifi":
+			_join(it.net)
+		"rescan":
+			if setup:
+				setup.wifi_scan(true)
+				_build_items()
 		"entry":
 			_add_app(it.entry)
 
@@ -262,6 +279,8 @@ func _enter() -> void:
 	item = 0
 	col = 0
 	_scroll = 0
+	if section_id() == "network" and setup:
+		setup.wifi_scan()
 	_build_items()
 	if section_id() == "apps" and _items.size() > 1:
 		item = 1
@@ -361,7 +380,42 @@ func _on_osk_done(text: String) -> void:
 			var url := _normal_url(text)
 			if url and _site_name:
 				_add_website(_site_name, url)
+		"wifi_password":
+			if text and setup:
+				setup.wifi_join(_wifi_net.ssid, text, _wifi_net.known)
+				_build_items()
 	_render()
+
+
+# Wi-Fi (D81) ---------------------------------------------------------------------
+
+func _join(net: Dictionary) -> void:
+	if not setup or net.in_use or not setup.joining.is_empty():
+		return
+	if net.enterprise:
+		wifi_message.emit("Open network settings to join %s" % net.ssid)
+	elif not net.secure or net.known:
+		setup.wifi_join(net.ssid, "", net.known)
+		_build_items()
+	else:
+		ask_wifi_password(net)
+
+
+## The keyboard, for a network's password. Also when a saved one's no longer works.
+func ask_wifi_password(net: Dictionary) -> void:
+	_wifi_net = net
+	_osk_for = "wifi_password"
+	_osk.open("Password for %s" % net.ssid, "")
+	_render()
+
+
+## The network a join result is about, from the last scan.
+func wifi_net(ssid: String) -> Dictionary:
+	if setup:
+		for n in setup.wifi.get("networks", []):
+			if n.ssid == ssid:
+				return n
+	return {"ssid": ssid, "secure": true, "known": true, "in_use": false, "enterprise": false}
 
 
 static func _normal_url(text: String) -> String:
@@ -457,13 +511,46 @@ func _change(key: String) -> void:
 		"reduce_motion": prefs.reduce_motion = not prefs.reduce_motion
 		"ui_scale": prefs.ui_scale = Prefs.next_in(Prefs.UI_SCALES, prefs.ui_scale)
 		"glyph_style": prefs.glyph_style = Prefs.next_in(Prefs.GLYPH_STYLES, prefs.glyph_style)
+		"display_mode":
+			# Saved only once it is kept (keep_picture).
+			picture_requested.emit(Prefs.next_in(Display.MODES, prefs.display_mode))
+			return
+		"sound_output": prefs.sound_output = Prefs.next_in(Sound.OUTPUTS, prefs.sound_output)
+		"volume": prefs.volume = Prefs.next_in(Sound.VOLUMES, prefs.volume)
 		"autostart":
 			Autostart.set_enabled(not Autostart.enabled(autostart_path), autostart_path)
 			_build_items()
 			return
 	Prefs.save({key: prefs[key]}, state_path)
 	prefs_changed.emit(prefs)
+	if setup and key in ["sound_output", "volume"]:
+		setup.apply_sound(key == "volume")
 	_build_items()
+
+
+## The new picture was kept: save it.
+func keep_picture(mode: String) -> void:
+	prefs.display_mode = mode
+	Prefs.save({"display_mode": mode}, state_path)
+	_build_items()
+	_render()
+
+
+## SystemSetup finished a job: show what the TV, sound and Wi-Fi are doing
+## now, with the focus on the same row if it is still there.
+func refresh() -> void:
+	if not visible or level == "picker" or not section_id() in ["display", "sound", "network"]:
+		return
+	var was := _current()
+	_build_items()
+	if not was.is_empty():
+		for i in _items.size():
+			var it: Dictionary = _items[i]
+			if it.type == was.type and (it.net.ssid == was.net.ssid if it.type == "wifi" else it.get("key", it.get("label")) == was.get("key", was.get("label"))):
+				item = i
+				break
+	item = clampi(item, 0, maxi(_items.size() - 1, 0))
+	_render()
 
 
 # Content model ----------------------------------------------------------------
@@ -481,10 +568,30 @@ func _build_items() -> void:
 			for a in _apps:
 				_items.append({"type": "app", "app": a})
 		"display":
+			_items.append({"type": "choice", "key": "display_mode", "label": "Picture", "value": Display.describe(prefs.display_mode)})
+			if setup and setup.enabled:
+				_items.append({"type": "info", "label": "Screen", "value": _screen_now(), "warn": not setup.display.get("ok", true)})
 			_items.append({"type": "choice", "key": "ui_scale", "label": "Screen size", "value": SCALE_NAMES.get(prefs.ui_scale, "100%")})
 			_items.append({"type": "toggle", "key": "reduce_motion", "label": "Reduce motion", "on": prefs.reduce_motion})
-		"network", "sound":
-			_items.append({"type": "button", "label": PANELS[section_id()].button})
+		"sound":
+			_items.append({"type": "choice", "key": "sound_output", "label": "Sound output", "value": Sound.OUTPUT_NAMES[prefs.sound_output]})
+			_items.append({"type": "choice", "key": "volume", "label": "Volume at startup", "value": "%d%%" % prefs.volume})
+			if setup and setup.enabled:
+				_items.append({"type": "info", "label": "Playing through", "value": _sound_now(), "warn": not setup.sound.get("ok", true)})
+			_items.append({"type": "button", "label": PANELS.sound.button})
+		"network":
+			if setup and setup.enabled:
+				var w: Dictionary = setup.wifi
+				var nets: Array = w.get("networks", [])
+				_items.append({"type": "info", "label": "Connected to", "value": _connected_now()})
+				for n in nets:
+					var joining: bool = setup.joining == n.ssid
+					_items.append({"type": "wifi", "net": n, "label": n.ssid, "value": "Connecting" if joining else Network.words(n)})
+				if nets.is_empty():
+					var none := "None found" if w.get("has_wifi", true) else "No Wi-Fi on this device"
+					_items.append({"type": "info", "label": "Wi-Fi networks", "value": "Searching" if setup.wifi_scanning() or w.is_empty() else none})
+				_items.append({"type": "rescan", "key": "rescan", "label": "Searching" if setup.wifi_scanning() else "Search again"})
+			_items.append({"type": "button", "label": PANELS.network.button})
 		"controllers":
 			_items.append({"type": "choice", "key": "glyph_style", "label": "Button names", "value": GLYPH_NAMES[prefs.glyph_style]})
 		"startup":
@@ -503,6 +610,33 @@ func _build_items() -> void:
 			_items.append({"type": "info", "label": "Session", "value": "%s, window handling needs X11" % session if warn else session, "warn": warn})
 			if memory_note:
 				_items.append({"type": "info", "label": "Last memory warning", "value": memory_note, "warn": true})
+
+
+func _screen_now() -> String:
+	var d: Dictionary = setup.display
+	if d.is_empty():
+		return "Checking"
+	if not d.ok:
+		return "Not found" if d.get("output", "") == "" else "%s, could not set it" % d.output
+	return "%s, %s" % [d.output, Display.describe(d.mode)]
+
+
+func _connected_now() -> String:
+	var w: Dictionary = setup.wifi
+	if w.is_empty():
+		return "Checking"
+	if not w.ok:
+		return "Unknown"
+	return w.connected if w.connected else "Not connected"
+
+
+func _sound_now() -> String:
+	var s: Dictionary = setup.sound
+	if s.is_empty():
+		return "Checking"
+	if s.get("playing", ""):
+		return s.playing
+	return "Not found" if not s.ok else "Unknown"
 
 
 # Build ------------------------------------------------------------------------
@@ -681,6 +815,12 @@ func _hint_pairs() -> Array:
 			return [["accept", "Change"], ["back", "Back"]]
 		"button":
 			return [["accept", "Open"], ["back", "Back"]]
+		"wifi":
+			if _current().net.in_use:
+				return [["back", "Back"]]
+			return [["accept", "Connect"], ["back", "Back"]]
+		"rescan":
+			return [["accept", "Search"], ["back", "Back"]]
 	return [["back", "Back"]]
 
 
@@ -761,7 +901,7 @@ func _row(it: Dictionary, on: bool) -> Control:
 			match it.type:
 				"toggle":
 					row.add_child(_toggle(it.on))
-				"choice", "info", "website":
+				"choice", "info", "website", "wifi":
 					var v := UI.label(it.value, Tokens.mono(400, Tokens.KIND_FONT), Tokens.KIND_FONT, Tokens.CORAL if it.get("warn", false) else Tokens.MUTED)
 					v.size_flags_vertical = SIZE_SHRINK_CENTER
 					row.add_child(v)

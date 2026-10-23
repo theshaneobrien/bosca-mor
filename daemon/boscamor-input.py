@@ -42,6 +42,10 @@ KEY_LEFTMETA = 125
 KEY_RIGHTMETA = 126
 KEY_HOMEPAGE = 172
 BTN_MODE = 316
+# OK on some remotes. X has no key for these, so the launcher never sees
+# them; the daemon passes them on as Accept while it is on screen (D82).
+KEY_OK = 352
+KEY_SELECT = 353
 WATCHED_KEYS = (KEY_HOMEPAGE, BTN_MODE, KEY_POWER, KEY_HOME)
 META_KEYS = (KEY_LEFTMETA, KEY_RIGHTMETA)
 PRESS = 1  # 0 release, 2 repeat
@@ -72,6 +76,13 @@ RETURN_PROMPT_WAIT_S = 120.0
 # keyboard focus, for up to this long (D69).
 ACTIVATE_FOR_S = 3.0
 ACTIVATE_EVERY_S = 0.5
+# The app's first window stays hidden behind the black launcher this long,
+# while it finishes going full screen, before it is raised (D77).
+APP_REVEAL_S = 2.0
+# After the launcher connects or is shown, keep activating its window until
+# it has the keyboard focus, for up to this long (D78). At login the desktop
+# can take the focus after the launcher's window is up.
+LAUNCHER_FOCUS_S = 15.0
 # Window types Return to Bosca Mor never closes. Dialogs belong to a parent.
 SKIP_TYPES = {"DESKTOP", "DOCK", "NOTIFICATION", "SPLASH", "TOOLBAR", "MENU",
               "DIALOG", "UTILITY", "DROPDOWN_MENU", "POPUP_MENU", "TOOLTIP", "COMBO", "DND"}
@@ -296,6 +307,7 @@ class App:
         self.activate_wid = None
         self.activate_until = None
         self.next_activate = 0.0
+        self.reveal_at = None
 
 
 class Client:
@@ -332,6 +344,8 @@ class Daemon:
         self.port = None
         self._denied = set()
         self.returning = None  # {"deadline", "next"} while closing desktop windows
+        self.focus_until = None  # keeping the launcher focused (D78)
+        self.next_focus = 0.0
         self.app_dirs = paths()["app_dirs"]
 
     # Overridable for tests.
@@ -428,9 +442,14 @@ class Daemon:
                 and now >= app.next_window_poll:
             self.poll_window()
         app = self.app
+        if app and app.reveal_at is not None and not app.closing and now >= app.reveal_at:
+            self.reveal_app(app)
+        app = self.app
         if app and app.activate_until is not None and not app.closing \
                 and now >= app.next_activate:
             self.poll_activate(app)
+        if self.focus_until is not None and now >= self.next_focus:
+            self.poll_launcher_focus()
         if self.evdev and now >= self.next_rescan:
             self.rescan()
             self.next_rescan = now + RESCAN_S
@@ -455,6 +474,10 @@ class Daemon:
             due.append(self.app.next_window_poll)
         if self.app and self.app.activate_until is not None:
             due.append(self.app.next_activate)
+        if self.app and self.app.reveal_at is not None:
+            due.append(self.app.reveal_at)
+        if self.focus_until is not None:
+            due.append(self.next_focus)
         if self.returning:
             due.append(self.returning["next"])
         due += [c.since + HANDSHAKE_S for c in self.clients if not c.authed]
@@ -530,9 +553,14 @@ class Daemon:
     def handle(self, msg):
         cmd = msg.get("cmd")
         if cmd == "state":
+            was = self.visible
             self.visible = bool(msg.get("visible"))
             if self.visible:
                 self.desktop = False
+                if not was:
+                    self.focus_launcher()
+            else:
+                self.focus_until = None
         elif cmd == "launch":
             self.launch(msg.get("id"), msg.get("argv"), bool(msg.get("keep_on_home")))
         elif cmd == "power":
@@ -568,6 +596,8 @@ class Daemon:
             self.on_home()
         elif code == KEY_HOME and device in self.meta_down:
             self.on_home()
+        elif code in (KEY_OK, KEY_SELECT) and self.visible:
+            self.send({"evt": "accept"})
 
     def on_power(self):
         log.info("power key: asking the launcher to confirm")
@@ -591,6 +621,30 @@ class Daemon:
     def show(self):
         self.send({"evt": "show"})
         self.raise_launcher()
+        self.focus_launcher()
+
+    def focus_launcher(self):
+        """Box test: at login the launcher took no keys until clicked; the
+        desktop held the focus. Keep activating it until it has it (D78)."""
+        now = self.now()
+        self.focus_until = now + LAUNCHER_FOCUS_S
+        self.next_focus = now
+
+    def poll_launcher_focus(self):
+        now = self.now()
+        if not self.visible and now > self.next_focus + LAUNCHER_FOCUS_S:
+            self.focus_until = None
+            return
+        active = self.active_window()
+        if active and self.window_props(active)["name"] == LAUNCHER_TITLE:
+            self.focus_until = None
+            return
+        if now >= self.focus_until:
+            log.warning("the launcher never took the focus")
+            self.focus_until = None
+            return
+        self.run_cmd(["wmctrl", "-F", "-a", LAUNCHER_TITLE])
+        self.next_focus = now + ACTIVATE_EVERY_S
 
     def raise_launcher(self):
         """The launcher waits full screen behind apps (D69), so bring it to
@@ -607,6 +661,16 @@ class Daemon:
     def window_props(self, wid):
         return parse_window(self.run_capture(["xprop", "-id", wid, "_NET_WM_WINDOW_TYPE", "WM_CLASS",
                                               "_NET_WM_NAME", "WM_NAME", "WM_TRANSIENT_FOR"]))
+
+    def reveal_app(self, app):
+        """Raise the app's window above the launcher, which waits full
+        screen and black behind it (D65, D69), and give it the focus."""
+        now = self.now()
+        app.reveal_at = None
+        self.run_cmd(["wmctrl", "-i", "-a", app.activate_wid])
+        app.activate_until = now + ACTIVATE_FOR_S
+        app.next_activate = now + ACTIVATE_EVERY_S
+        self.send({"evt": "app_window", "id": app.id})
 
     def active_window(self):
         """The window with the keyboard focus, or None."""
@@ -763,13 +827,10 @@ class Daemon:
             if is_app_window(self.window_props(wid)):
                 log.info("%s showed window %s", app.id, wid)
                 app.window_deadline = None
-                # Above the launcher, which waits full screen and black
-                # behind it (D65, D69), and with the keyboard focus.
-                self.run_cmd(["wmctrl", "-i", "-a", wid])
+                # Left behind the black launcher a moment longer while it
+                # goes full screen, so the desktop never flashes (D77).
                 app.activate_wid = wid
-                app.activate_until = now + ACTIVATE_FOR_S
-                app.next_activate = now + ACTIVATE_EVERY_S
-                self.send({"evt": "app_window", "id": app.id})
+                app.reveal_at = now + APP_REVEAL_S
                 return
         if now >= app.window_deadline:
             log.warning("%s showed no window within %.0f s; ending it", app.id, LAUNCH_TIMEOUT_S)

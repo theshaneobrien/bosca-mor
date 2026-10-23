@@ -1,0 +1,1 @@
+55	alsa_output.pci-0000_00_0e.0.analog-stereo	PipeWire	s32le 2ch 48000Hz	SUSPENDED

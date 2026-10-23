@@ -18,6 +18,7 @@ const StillOpen := preload("res://scripts/still_open.gd")
 const Loader := preload("res://scripts/loader.gd")
 const Apps := preload("res://scripts/apps.gd")
 const Toast := preload("res://scripts/toast.gd")
+const SystemSetup := preload("res://scripts/system_setup.gd")
 
 const OFF_TEXT := {"poweroff": "Shutting down", "restart": "Restarting"}
 
@@ -36,6 +37,8 @@ var still: Control
 var toast: Control
 var loader: Control
 var daemon: Node
+## The TV picture and sound (D79, D80).
+var setup: Node
 var _launched := {}                # the app last sent to the daemon, for its name
 var _off: ColorRect
 var _off_text: Label
@@ -54,6 +57,9 @@ var _shown_sleep_usec := 0
 var _asleep := false               # tree paused and long main-loop sleeps
 var _removing := {}               # the app the remove confirm is about
 var _panel_running := false        # a Cinnamon settings panel opened from Settings
+var _picture_old := ""             # while a new picture is on trial: the one to go back to
+var _picture_new := ""
+var _picture_timer: Timer
 
 
 func _ready() -> void:
@@ -64,6 +70,15 @@ func _ready() -> void:
 	daemon = DaemonClient.new()
 	daemon.name = "Daemon"
 	add_child(daemon)
+	setup = SystemSetup.new()
+	setup.name = "Setup"
+	add_child(setup)
+	_picture_timer = Timer.new()
+	_picture_timer.one_shot = true
+	_picture_timer.timeout.connect(func():
+		if state.confirm_kind == "picture":
+			state.cancel_confirm())
+	add_child(_picture_timer)
 
 	home = HomeScene.instantiate()
 	home.apps_path = apps_path
@@ -74,6 +89,7 @@ func _ready() -> void:
 	settings = SettingsView.new()
 	settings.apps_path = apps_path
 	settings.state_path = state_path
+	settings.setup = setup
 	add_child(settings)
 	still = StillOpen.new()
 	add_child(still)
@@ -104,6 +120,12 @@ func _ready() -> void:
 		_removing = app
 		state.ask("remove"))
 	state.remove_confirmed.connect(func(): settings.remove_app(_removing.get("id", "")))
+	settings.picture_requested.connect(_on_picture_requested)
+	setup.picture_done.connect(_on_picture_done)
+	setup.changed.connect(settings.refresh)
+	setup.wifi_done.connect(_on_wifi_done)
+	settings.wifi_message.connect(toast.push)
+	state.picture_kept.connect(_keep_picture)
 	home.launch_requested.connect(_launch)
 	home.launch_faded.connect(_on_launch_faded)
 	daemon.app_window.connect(_on_app_window)
@@ -114,8 +136,10 @@ func _ready() -> void:
 	daemon.power_pressed.connect(_on_power_pressed)
 	daemon.memory_warning.connect(_on_memory_warning)
 	daemon.still_open.connect(_on_still_open)
+	daemon.accept_pressed.connect(_on_remote_accept)
 	print("session type: %s" % OS.get_environment("XDG_SESSION_TYPE"))
 	apply_prefs(Prefs.load_prefs(state_path))
+	setup.start()
 
 
 ## Reduce motion, screen size and button names, from Settings or state.json.
@@ -126,6 +150,72 @@ func apply_prefs(p: Dictionary) -> void:
 	var im := get_node_or_null("/root/InputMode")
 	if im:
 		im.set_glyph_style(p.glyph_style)
+	if _picture_old.is_empty():          # not while a new picture is on trial
+		setup.configure(p)
+
+
+# Picture (D79): try the new mode, then ask to keep it. Cancel, Back, Home or
+# PICTURE_KEEP seconds with no answer put the old one back.
+func _on_picture_requested(mode: String) -> void:
+	if not _picture_old.is_empty():
+		return                           # one change at a time
+	_picture_old = settings.prefs.display_mode
+	_picture_new = mode
+	setup.try_picture(mode)
+
+
+func _on_picture_done(r: Dictionary) -> void:
+	if _picture_old.is_empty():
+		return
+	if not r.get("ok", false):
+		toast.push("Couldn't change the picture")
+		_undo_picture()
+		return
+	_picture_new = r.mode
+	if not r.changed:
+		_keep_picture()                  # it was on that already
+		return
+	if state.screen != State.Screen.SETTINGS:
+		_undo_picture()                  # left Settings while it changed
+		return
+	state.ask("picture")
+	_picture_timer.start(Tokens.PICTURE_KEEP)
+
+
+# Wi-Fi (D81): a saved network whose password stopped working asks for it.
+func _on_wifi_done(r: Dictionary) -> void:
+	if r.ok:
+		toast.push("Connected to %s" % r.ssid)
+	elif r.error == "password" and not r.get("tried_password", false) and state.screen == State.Screen.SETTINGS:
+		settings.ask_wifi_password(settings.wifi_net(r.ssid))
+	elif r.error == "password":
+		toast.push("The password for %s didn't work" % r.ssid)
+	else:
+		toast.push("Couldn't connect to %s" % r.ssid)
+
+
+func _keep_picture() -> void:
+	_picture_timer.stop()
+	settings.keep_picture(_picture_new)
+	setup.display_mode = _picture_new
+	_picture_old = ""
+
+
+func _undo_picture() -> void:
+	_picture_timer.stop()
+	setup.undo_picture(_picture_old)
+	_picture_old = ""
+
+
+# The daemon saw OK on a remote that X has no key for (D82): press Accept.
+func _on_remote_accept() -> void:
+	if is_hidden:
+		return
+	for down in [true, false]:
+		var ev := InputEventAction.new()
+		ev.action = "accept"
+		ev.pressed = down
+		Input.parse_input_event(ev)
 
 
 # Return to Bosca Mor ended with windows still open.
@@ -299,6 +389,7 @@ func show_launcher() -> void:
 	home.refresh()
 	toast.release()
 	daemon.set_visible(true)
+	setup.check()                      # an app or the TV may have changed the picture
 
 
 func _unhandled_input(ev: InputEvent) -> void:
@@ -350,8 +441,10 @@ func _unhandled_input(ev: InputEvent) -> void:
 func _on_changed(to: State.Screen, from: State.Screen) -> void:
 	home.accepting_input = to == State.Screen.HOME
 	settings.accepting_input = to == State.Screen.SETTINGS
+	if from == State.Screen.CONFIRM and state.confirm_kind == "picture" and not _picture_old.is_empty():
+		_undo_picture()                  # left the confirm without Keep
 	if to == State.Screen.SETTINGS:
-		if from == State.Screen.CONFIRM and state.confirm_kind == "remove":
+		if from == State.Screen.CONFIRM and state.confirm_kind in ["remove", "picture"]:
 			settings.resume()        # back where it was, not reset to the top
 		else:
 			settings.open()
