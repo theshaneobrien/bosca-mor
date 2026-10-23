@@ -11,6 +11,28 @@ const Autostart := preload("res://scripts/autostart.gd")
 const DesktopEntries := preload("res://scripts/desktop_entries.gd")
 const OSK := preload("res://scripts/osk.gd")
 const InputModeScript := preload("res://scripts/input_mode.gd")
+const IconResolver := preload("res://scripts/icon_resolver.gd")
+const Tokens := preload("res://theme/tokens.gd")
+const SettingsScript := preload("res://scripts/settings.gd")
+
+
+# Enough of SystemSetup for the Wi-Fi rows and a join.
+class FakeSetup extends Node:
+	var enabled := true
+	var wifi := {}
+	var joining := ""
+	var display := {}
+	var sound := {}
+	var joined: Array = []
+
+	func wifi_scan(_rescan := false) -> void:
+		pass
+
+	func wifi_scanning() -> bool:
+		return false
+
+	func wifi_join(ssid: String, password: String, known: bool) -> void:
+		joined.append([ssid, password, known])
 
 var dir: String
 var apps_path: String
@@ -56,9 +78,15 @@ func _teardown() -> void:
 	var im = tree.root.get_node_or_null("InputMode")
 	if im:
 		im.set_glyph_style("auto")
-	for f in DirAccess.get_files_at(dir):
-		DirAccess.remove_absolute(dir.path_join(f))
-	DirAccess.remove_absolute(dir)
+	_rm_tree(dir)
+
+
+func _rm_tree(path: String) -> void:
+	for d in DirAccess.get_directories_at(path):
+		_rm_tree(path.path_join(d))
+	for f in DirAccess.get_files_at(path):
+		DirAccess.remove_absolute(path.path_join(f))
+	DirAccess.remove_absolute(path)
 
 
 func _act(action: String) -> void:
@@ -190,16 +218,17 @@ func test_move_stops_at_the_ends() -> void:
 	_teardown()
 
 
-# Walks the D-pad to a key and presses it, the way a remote would.
+# Walks the D-pad to a key on the page showing and presses it, the way a
+# remote would.
 func _dpad_press(osk: Control, label: String) -> void:
 	var tr := -1
 	var tc := -1
 	for r in OSK.ROWS.size():
 		for c in OSK.ROWS[r].size():
-			if OSK.ROWS[r][c][0] == label:
+			if osk.label_at(r, c) == label:
 				tr = r
 				tc = c
-	check(tr >= 0, "key %s exists" % label)
+	check(tr >= 0, "key %s exists on the %s page" % [label, osk.layer])
 	for i in 10:
 		if osk.row == tr:
 			break
@@ -210,6 +239,36 @@ func _dpad_press(osk: Control, label: String) -> void:
 		_act("nav_right" if osk.col < tc else "nav_left")
 	eq(osk.focused_key(), label, "reached %s" % label)
 	_act("accept")
+
+
+# Types any printable text with the D-pad alone: Shift for capitals, the
+# symbols key for the rest.
+func _dpad_type(osk: Control, s: String) -> void:
+	for ch in s:
+		if not _on_page(osk, ch):
+			var want := "symbols" if _in_symbols(ch) else ("upper" if ch != ch.to_lower() else "lower")
+			if want == "symbols":
+				_dpad_press(osk, OSK.SYMBOLS_KEY)
+			elif osk.layer == "symbols" and want == "lower":
+				_dpad_press(osk, OSK.LETTERS_KEY)
+			else:
+				_dpad_press(osk, OSK.SHIFT)
+		_dpad_press(osk, ch)
+
+
+func _on_page(osk: Control, ch: String) -> bool:
+	for r in OSK.ROWS.size():
+		for c in OSK.ROWS[r].size():
+			if osk.label_at(r, c) == ch:
+				return true
+	return false
+
+
+func _in_symbols(ch: String) -> bool:
+	for r in OSK.SYMBOLS:
+		if ch in r:
+			return true
+	return false
 
 
 func test_osk_types_a_url_with_the_dpad() -> void:
@@ -297,6 +356,27 @@ func test_exec_parsing() -> void:
 	eq(DesktopEntries.id_for("org.foo.Bar.desktop", {}), "org-foo-bar", "id")
 	eq(DesktopEntries.id_for("kodi.desktop", {"kodi": {}}), "kodi-2", "unique id")
 	eq(DesktopEntries.parse("[Desktop Entry]\nType=Application\nName=X\nExec=x\nHidden=true\n"), {}, "Hidden skipped")
+	# As Flatpak's exporter writes them: single quotes, and every backslash
+	# doubled by the string escapes (r"" is the text in the file).
+	var fp := DesktopEntries.exec_to_argv(r"/usr/bin/flatpak run --branch=stable --command='bar game' org.foo.Bar -c 'cd /app && ./run' '--x=a,b' %U")
+	eq(fp, ["/usr/bin/flatpak", "run", "--branch=stable", "--command=bar game", "org.foo.Bar", "-c", "cd /app && ./run", "--x=a,b"], "single quotes")
+	eq(IconResolver.flatpak_id(fp), "org.foo.Bar", "Flatpak id past a quoted --command")
+	eq(DesktopEntries.exec_to_argv(r"echo 'it'\\''s'"), ["echo", "it's"], "a quote inside single quotes")
+	eq(DesktopEntries.exec_to_argv(r'sh -c "echo \\"hi\\""'), ["sh", "-c", 'echo "hi"'], "escaped quotes, as the spec writes them")
+	eq(DesktopEntries.exec_to_argv(r'x "a\\\\b" "c\d"'), ["x", "a\\b", "c\\d"], "a backslash in quotes")
+	eq(DesktopEntries.parse("[Desktop Entry]\nType=Application\nName=\nExec=x\n"), {}, "an empty Name is not offered")
+
+
+# Box finding: a music player was labelled Video (every one lists AudioVideo).
+func test_kind_from_categories() -> void:
+	eq(DesktopEntries.kind_for("Audio;Music;Player;AudioVideo;"), "Music", "Spotify")
+	eq(DesktopEntries.kind_for("GNOME;GTK;AudioVideo;Audio;Player;"), "Music", "Rhythmbox")
+	eq(DesktopEntries.kind_for("AudioVideo;Video;Player;"), "Video", "Kodi")
+	eq(DesktopEntries.kind_for("AudioVideo;Audio;Video;Player;TV;"), "Video", "mpv")
+	eq(DesktopEntries.kind_for("AudioVideo;Player;Recorder;"), "Video", "a generic player")
+	eq(DesktopEntries.kind_for("Network;FileTransfer;Game;"), "Games", "Steam")
+	eq(DesktopEntries.kind_for("Network;WebBrowser;"), "Web", "a browser")
+	eq(DesktopEntries.kind_for("Network;InstantMessaging;"), "Other", "chat is not the web")
 
 
 # Display, Controllers, Startup, Network ---------------------------------------------
@@ -361,6 +441,26 @@ func test_startup_toggle() -> void:
 	_act("accept")
 	check(Autostart.enabled(st.autostart_path), "on again")
 	_teardown()
+
+
+# A hand-edited entry that starts with a comment: the key must stay inside
+# [Desktop Entry], or the whole file stops loading.
+func test_startup_toggle_keeps_the_key_in_its_group() -> void:
+	var path := ProjectSettings.globalize_path("user://test-autostart-%d.desktop" % Time.get_ticks_usec())
+	Apps.write_atomic(path, "# hand edited\n\n[Desktop Entry]\nType=Application\nExec=/opt/boscamor/boscamor\nX-GNOME-Autostart-enabled=true\n\n[Desktop Action other]\nName=Other\nHidden=true\n")
+	for on in [false, true]:
+		check(Autostart.set_enabled(on, path), "rewritten")
+		var lines := FileAccess.get_file_as_string(path).split("\n")
+		var head := lines.find("[Desktop Entry]")
+		var key := lines.find("X-GNOME-Autostart-enabled=%s" % ("true" if on else "false"))
+		check(head >= 0 and key > head and key < lines.find("[Desktop Action other]"), "key inside the group: %s" % [lines])
+		eq(Array(lines).filter(func(l): return l.begins_with("X-GNOME-Autostart-enabled")).size(), 1, "one key")
+		eq(Autostart.enabled(path), on, "reads back")
+		check(lines.has("Hidden=true") and lines.has("# hand edited") and lines.has("Exec=/opt/boscamor/boscamor"), "the rest kept")
+	Apps.write_atomic(path, "# no group\nExec=x\n")
+	check(not Autostart.set_enabled(false, path), "not a desktop entry: left alone")
+	eq(FileAccess.get_file_as_string(path), "# no group\nExec=x\n", "unchanged")
+	DirAccess.remove_absolute(path)
 
 
 func test_network_opens_cinnamon_panel_like_an_app() -> void:
@@ -507,4 +607,292 @@ func test_remove_on_a_row_with_a_start_page() -> void:
 	eq(st.col, 0, "back to the row")
 	_act("nav_left")
 	eq(st.level, "nav", "then the section list")
+	_teardown()
+
+
+func _toasted(msg: String) -> bool:
+	return main.toast.text == msg or msg in main.toast.queue
+
+
+func _click(pos: Vector2) -> void:
+	var e := InputEventMouseButton.new()
+	e.button_index = MOUSE_BUTTON_LEFT
+	e.pressed = true
+	e.position = pos
+	e.global_position = pos
+	tree.root.push_input(e, true)
+
+
+func _centre_of(c: Control) -> Vector2:
+	return c.get_global_rect().get_center()
+
+
+func _net(ssid: String, open := false) -> Dictionary:
+	return {"ssid": ssid, "signal": 70, "secure": not open, "known": false, "in_use": false, "enterprise": false}
+
+
+# The Linux export packs only Godot resources unless include_filter names a
+# file. Whatever is read from res://data and isn't a resource must be named
+# there, or the box build reads "" (user.js was left out, so website
+# profiles got an empty one).
+func test_export_includes_the_bundled_data() -> void:
+	var cfg := ConfigFile.new()
+	eq(cfg.load("res://export_presets.cfg"), OK, "presets load")
+	eq(cfg.get_value("preset.0", "name", ""), "Linux", "the Linux preset")
+	var filters: Array = Array(String(cfg.get_value("preset.0", "include_filter", "")).split(",", false)).map(func(f): return f.strip_edges())
+	var plain := []
+	for f in DirAccess.get_files_at("res://data"):
+		if f.get_extension() in ["import", "uid"]:
+			continue
+		var path := "res://data".path_join(f)
+		if ResourceLoader.exists(path):
+			continue        # a resource: exported anyway
+		plain.append(f)
+		check(filters.any(func(p): return path.matchn(p) or path.trim_prefix("res://").matchn(p)),
+			"%s is in the Linux export's include_filter %s" % [path, filters])
+	check("user.js" in plain, "user.js is read from res://data and is not a resource")
+
+
+func test_website_profile_never_gets_an_empty_user_js() -> void:
+	await _setup()
+	st.profiles_dir = dir.path_join("profiles")
+	var first: String = st.profiles_dir.path_join("bbc-iplayer")
+	DirAccess.make_dir_recursive_absolute(first)
+	FileAccess.open(first.path_join("user.js"), FileAccess.WRITE).close()   # left empty by an older build
+	st._add_website("BBC iPlayer", "https://bbc.co.uk/iplayer")
+	check(FileAccess.get_file_as_string(first.path_join("user.js")).contains("media.eme.enabled"), "an empty user.js is seeded again")
+	st.user_js = "res://data/missing.js"     # a build that left it out
+	st._add_website("Other", "https://example.org")
+	check(not FileAccess.file_exists(st.profiles_dir.path_join("other").path_join("user.js")), "no empty user.js written")
+	check(_toasted("Couldn't set up the browser for Other"), "and says so")
+	check("other" in _file_ids(), "the tile is still added")
+	_teardown()
+
+
+func test_an_address_with_no_site_adds_nothing() -> void:
+	await _setup()
+	st.profiles_dir = dir.path_join("profiles")
+	var before := _file_ids()
+	_act("nav_right")
+	_act("nav_up")
+	_act("accept")
+	_act("accept")                  # A website
+	var osk: Control = st.osk()
+	_type("Test")
+	osk.press("Done")
+	_type("https://")
+	osk.press("Done")
+	check(not osk.visible, "keyboard closed")
+	eq(_file_ids(), before, "nothing written")
+	check(not DirAccess.dir_exists_absolute(st.profiles_dir.path_join("test")), "no profile folder")
+	check(_toasted("That address doesn't look right"), "says so")
+	eq(SettingsScript._host("https://www.bbc.co.uk/iplayer"), "bbc.co.uk", "host")
+	eq(SettingsScript._host("http://"), "", "no host")
+	_teardown()
+
+
+# A hand-edited apps.json that won't parse: Settings shows why and never
+# saves, which would replace every entry with only what it holds.
+func test_a_broken_apps_json_is_never_saved_over() -> void:
+	await _setup()
+	var text := FileAccess.get_file_as_string(Apps.DEFAULT_PATH)
+	var at := text.find("},\n")
+	text = text.left(at + 1) + text.substr(at + 2)       # one comma gone
+	var f := FileAccess.open(apps_path, FileAccess.WRITE)
+	f.store_string(text)
+	f.close()
+	st.open()
+	_act("nav_right")
+	eq(st._items.map(func(i): return i.type), ["info", "info"], "only the reason, no Add app and no rows")
+	check(String(st._items[0].value).contains("line"), "names the line: %s" % st._items[0].value)
+	check(not st._add.visible, "no Add app button")
+	eq(st.item, 0, "focus on the reason")
+	_act("accept")
+	eq(st.level, "content", "OK does nothing there")
+	st._add_app({"file": "org.foo.Bar.desktop", "name": "Bar", "kind": "Games", "comment": "", "argv": ["bar"]})
+	eq(FileAccess.get_file_as_string(apps_path), text, "file untouched")
+	check(not FileAccess.file_exists(apps_path + ".tmp"), "no temp file")
+	_teardown()
+
+
+func test_a_failed_save_reloads_and_says_so() -> void:
+	await _setup()
+	var before := FileAccess.get_file_as_string(apps_path)
+	DirAccess.make_dir_absolute(apps_path + ".tmp")      # the temp file can't be written
+	_act("nav_right")
+	_act("nav_up")
+	_act("accept")
+	_act("nav_down")
+	_act("nav_down")
+	_act("accept")                                       # Kodi
+	for a in st._apps:
+		check(a.has("tint"), "no placeholder left: %s" % a)
+	check(st._items.all(func(i): return i.type != "app" or i.app.id != "kodi"), "no Kodi row")
+	eq(FileAccess.get_file_as_string(apps_path), before, "file unchanged")
+	check(_toasted("Couldn't save the app list"), "says so")
+	st.remove_app("plex")
+	check(st._app_index("plex") >= 0, "a failed remove leaves the app in Settings, as on Home")
+	DirAccess.remove_absolute(apps_path + ".tmp")
+	_teardown()
+
+
+func _row_glyph(k: int) -> TextureRect:
+	# A row holds the grip, then the tile with the icon.
+	return st._list.get_child(k).get_child(0).get_child(1).get_child(0)
+
+
+func test_row_icons_are_decoded_once_per_open() -> void:
+	var icons := ProjectSettings.globalize_path("user://test-row-icons-%d" % Time.get_ticks_usec())
+	DirAccess.make_dir_recursive_absolute(icons)
+	var img := Image.create(64, 64, false, Image.FORMAT_RGBA8)
+	img.fill(Tokens.CORAL)
+	img.save_png(icons.path_join("youtube.png"))
+	IconResolver.reset()
+	IconResolver.roots = {"dropin": icons, "cache": icons, "flatpak": [], "themes": [], "pixmaps": [], "desktop": [icons]}
+	await _setup()
+	_act("nav_right")
+	var tex: Texture2D = _row_glyph(0).texture
+	check(tex != null, "the drop-in is drawn")
+	_act("nav_down")
+	_act("nav_down")
+	check(_row_glyph(0).texture == tex, "the same texture after two presses, not decoded again")
+	st.open()
+	_act("nav_right")
+	check(_row_glyph(0).texture != tex, "decoded again when Settings opens again")
+	IconResolver.reset()
+	_teardown()
+	_rm_tree(icons)
+
+
+func test_wifi_password_with_capitals_and_symbols_on_the_dpad() -> void:
+	await _setup()
+	var fake := FakeSetup.new()
+	st.setup = fake
+	st.ask_wifi_password(_net("Upstairs"))
+	var osk: Control = st.osk()
+	check(osk.visible and osk.secret, "keyboard open, hiding what is typed")
+	_dpad_type(osk, "Kx7mP2q!")
+	eq(osk.text, "Kx7mP2q!", "typed with the D-pad alone")
+	eq(osk._field.text, "••••••••|", "bullets on the TV")
+	_dpad_press(osk, "Done")
+	eq(fake.joined, [["Upstairs", "Kx7mP2q!", false]], "the password as typed goes to the join")
+	osk.open("Website name", "")
+	check(not osk.secret, "other fields show their text")
+	eq(osk.layer, "lower", "and open on lower case")
+	_dpad_type(osk, "A&b")
+	eq(osk._field.text, "A&b|", "shown as typed")
+	osk.close()
+	st.setup = null
+	fake.free()
+	_teardown()
+
+
+func test_osk_long_text_shows_its_end() -> void:
+	await _setup()
+	var osk: Control = st.osk()
+	var long := "https://www.example.com/" + "a".repeat(60) + "/end"
+	osk.open("Browser start page", long)
+	var shown: String = osk._field.text
+	check(shown.begins_with("…") and shown.ends_with("/end|"), "the end and the cursor show: %s" % shown)
+	var font: Font = Tokens.mono(400, Tokens.OSK_FONT)
+	check(font.get_string_size(shown, HORIZONTAL_ALIGNMENT_LEFT, -1, Tokens.OSK_FONT).x <= osk._key_width(10) - 2 * Tokens.NAV_ITEM_PAD, "fits the field")
+	eq(osk.text, long, "the text itself is whole")
+	osk.open("Browser start page", "example.com")
+	eq(osk._field.text, "example.com|", "short text as it is")
+	osk.close()
+	_teardown()
+
+
+# With a USB keyboard, Enter after typing finishes; it used to type the key
+# the D-pad had focused ("example.com1").
+func test_keyboard_enter_after_typing_finishes() -> void:
+	await _setup()
+	_act("nav_right")
+	for i in 5:
+		_act("nav_down")
+	_act("nav_right")
+	_act("accept")                     # Browser start page
+	var osk: Control = st.osk()
+	for i in osk.text.length():
+		_key(0, KEY_BACKSPACE)
+	_type("example.com")
+	_key(0, KEY_ENTER)
+	check(not osk.visible, "Enter finished")
+	eq(_file_entry("browser").url, "https://example.com", "saved with no stray character")
+	_teardown()
+
+
+func test_wifi_rescan_never_moves_focus_onto_another_network() -> void:
+	await _setup()
+	var fake := FakeSetup.new()
+	fake.wifi = {"ok": true, "connected": "", "networks": [_net("A"), _net("B")]}
+	st.setup = fake
+	st.section = 2
+	eq(st.section_id(), "network", "Network")
+	st.level = "content"
+	st._build_items()
+	st.item = 2
+	eq(st._current().label, "B", "on B")
+	fake.wifi = {"ok": true, "connected": "", "networks": [_net("C"), _net("B")]}
+	st.refresh()
+	eq(st._current().label, "B", "B still there: focus follows it")
+	fake.wifi = {"ok": true, "connected": "", "networks": [_net("A"), _net("Neighbour", true)]}
+	st.refresh()
+	eq(st.item, 0, "B went: focus leaves the networks")
+	eq(st._current().type, "info", "on Connected to, where OK does nothing")
+	st.setup = null
+	fake.free()
+	_teardown()
+
+
+# A click acts on the row, button or key under the pointer, like Home and the
+# sidebar; it used to act on whatever had focus.
+func test_a_click_acts_on_what_is_under_the_pointer() -> void:
+	await _setup()
+	_act("nav_right")
+	eq(st._current().app.id, "youtube", "focus on YouTube")
+	await tree.process_frame
+	_click(_centre_of(st._list.get_child(1)))     # Add app sits in the heading: YouTube, then Plex
+	eq(_file_entry("plex").get("hidden"), true, "Plex hidden")
+	eq(_file_entry("youtube").has("hidden"), false, "not YouTube")
+	eq(st._current().app.id, "plex", "focus follows the click")
+	await tree.process_frame
+	var before := FileAccess.get_file_as_string(apps_path)
+	_click(Vector2(Tokens.BASE_SIZE.x - Tokens.PAD_X / 2, Tokens.BASE_SIZE.y - Tokens.PAD_BOTTOM / 2))
+	eq(FileAccess.get_file_as_string(apps_path), before, "a click on nothing changes nothing")
+	eq(st._current().app.id, "plex", "nor the focus")
+	var remove: Control = null
+	for b in st._list.get_child(0).get_child(0).get_children():
+		if b.has_meta("col"):
+			remove = b
+	_click(_centre_of(remove))
+	eq(main.state.screen, State.Screen.CONFIRM, "YouTube's Remove asks first")
+	eq(main.confirm.title(), "Remove YouTube?", "names the app clicked")
+	eq(main.state.confirm_focus, 0, "Cancel focused")
+	_act("back")
+	await tree.process_frame
+	_click(_centre_of(st._nav.get_child(1)))
+	eq(st.section_id(), "display", "a click on a section opens it")
+	eq(st.level, "content", "into its rows")
+	_teardown()
+
+
+func test_a_click_on_the_keyboard_presses_the_key_under_it() -> void:
+	await _setup()
+	_act("nav_right")
+	_act("nav_up")
+	_act("accept")
+	_act("accept")                     # A website: the name keyboard
+	var osk: Control = st.osk()
+	await tree.process_frame
+	_click(_centre_of(osk._keys[2][7]))
+	eq(osk.text, "k", "typed the key under the pointer, not the focused 1")
+	eq(osk.focused_key(), "k", "and focused it")
+	_click(Vector2(Tokens.PAD_X / 2, Tokens.PAD_TOP / 2))
+	eq(osk.text, "k", "a click off the keys types nothing")
+	check(osk.visible, "and doesn't close it")
+	_click(_centre_of(osk._keys[4][0]))      # Shift
+	_click(_centre_of(osk._keys[1][0]))
+	eq(osk.text, "kQ", "Shift, then Q")
+	osk.close()
 	_teardown()

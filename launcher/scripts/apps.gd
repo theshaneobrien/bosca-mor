@@ -32,14 +32,17 @@ static func seed_dev_home() -> bool:
 
 
 # Returns {"apps": Array[Dictionary], "errors": Array[String], "raw": {id:
-# entry as written}, "invalid": [entries that failed]}. Bad entries are
-# skipped with an error; a bad file gives an empty list, never a crash.
+# entry as written}, "invalid": [entries that failed], "broken": bool}. Bad
+# entries are skipped with an error; a bad file gives an empty list, never a
+# crash. "broken" is a file that is there but can't be read, won't parse or
+# isn't a list: saving over it would lose every entry, so Settings won't.
 static func load_file(path := "") -> Dictionary:
 	if path.is_empty():
 		path = default_source()
 	var text := FileAccess.get_file_as_string(path)
 	if text.is_empty():
-		return {"apps": [], "errors": ["cannot read %s" % path], "raw": {}, "invalid": []}
+		return {"apps": [], "errors": ["cannot read %s" % path], "raw": {}, "invalid": [],
+			"broken": FileAccess.file_exists(path)}
 	return parse(text)
 
 
@@ -50,10 +53,10 @@ static func parse(text: String) -> Dictionary:
 	var invalid := []
 	var json := JSON.new()
 	if json.parse(text) != OK:
-		return {"apps": apps, "errors": ["apps.json line %d: %s" % [json.get_error_line(), json.get_error_message()]], "raw": raws, "invalid": invalid}
+		return {"apps": apps, "errors": ["apps.json line %d: %s" % [json.get_error_line(), json.get_error_message()]], "raw": raws, "invalid": invalid, "broken": true}
 	var data = json.data
 	if not data is Array:
-		return {"apps": apps, "errors": ["apps.json is not a JSON array"], "raw": raws, "invalid": invalid}
+		return {"apps": apps, "errors": ["apps.json is not a JSON array"], "raw": raws, "invalid": invalid, "broken": true}
 	var seen := {}
 	for i in data.size():
 		var raw = data[i]
@@ -71,7 +74,7 @@ static func parse(text: String) -> Dictionary:
 		seen[raw.id] = true
 		raws[raw.id] = raw
 		apps.append(_normalise(raw))
-	return {"apps": apps, "errors": errors, "raw": raws, "invalid": invalid}
+	return {"apps": apps, "errors": errors, "raw": raws, "invalid": invalid, "broken": false}
 
 
 ## Writes entries (as they appear in the file) atomically: a temp file in
@@ -81,15 +84,25 @@ static func save_file(path: String, entries: Array) -> Error:
 ")
 
 
+## The old file is replaced only once the temp file holds all of `text`.
 static func write_atomic(path: String, text: String) -> Error:
 	DirAccess.make_dir_recursive_absolute(path.get_base_dir())
 	var tmp := path + ".tmp"
 	var f := FileAccess.open(tmp, FileAccess.WRITE)
 	if f == null:
 		return FileAccess.get_open_error()
-	f.store_string(text)
+	var stored := f.store_string(text)
 	f.close()
+	if not stored or not _landed(tmp, text):
+		DirAccess.remove_absolute(tmp)
+		return ERR_FILE_CANT_WRITE
 	return DirAccess.rename_absolute(tmp, path)
+
+
+# A full disk fails inside close(), which Godot doesn't report, so check what
+# reached the disk.
+static func _landed(tmp: String, text: String) -> bool:
+	return FileAccess.get_file_as_bytes(tmp).size() == text.to_utf8_buffer().size()
 
 
 ## The argv to run: a "{url}" element becomes the app's url.
