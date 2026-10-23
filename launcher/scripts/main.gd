@@ -19,6 +19,7 @@ const Loader := preload("res://scripts/loader.gd")
 const Apps := preload("res://scripts/apps.gd")
 const Toast := preload("res://scripts/toast.gd")
 const SystemSetup := preload("res://scripts/system_setup.gd")
+const Display := preload("res://scripts/display.gd")
 
 const OFF_TEXT := {"poweroff": "Shutting down", "restart": "Restarting"}
 
@@ -60,6 +61,17 @@ var _panel_running := false        # a Cinnamon settings panel opened from Setti
 var _picture_old := ""             # while a new picture is on trial: the one to go back to
 var _picture_new := ""
 var _picture_timer: Timer
+## Power just brought the launcher back from black (an app, the desktop or
+## the off screen): no frame of Home has been drawn yet to blur.
+var _blur_stale := false
+## How often the sidebar blur was captured (tests: headless can't capture).
+var blur_captures := 0
+## Hover can't move a dialog's focus until the pointer has moved POINTER_MOVE
+## from where it was when the dialog opened, so air-mouse jitter over the
+## action button can't take the focus off Cancel (Law 2).
+var _hover_held := false
+var _hover_anchored := false
+var _hover_from := Vector2.ZERO
 
 
 func _ready() -> void:
@@ -86,8 +98,6 @@ func _ready() -> void:
 	home.apps_path = apps_path
 	home.state_path = state_path
 	add_child(home)
-	loader = Loader.new()              # over Home's black launch fade
-	add_child(loader)
 	settings = SettingsView.new()
 	settings.apps_path = apps_path
 	settings.state_path = state_path
@@ -95,6 +105,8 @@ func _ready() -> void:
 	add_child(settings)
 	still = StillOpen.new()
 	add_child(still)
+	loader = Loader.new()              # over Home's black launch fade, and over Settings for a panel
+	add_child(loader)
 	sidebar = Sidebar.new(home)
 	add_child(sidebar)
 	confirm = Confirm.new()
@@ -139,6 +151,7 @@ func _ready() -> void:
 	daemon.memory_warning.connect(_on_memory_warning)
 	daemon.still_open.connect(_on_still_open)
 	daemon.accept_pressed.connect(_on_remote_accept)
+	daemon.power_failed.connect(_on_power_failed)
 	print("session type: %s" % OS.get_environment("XDG_SESSION_TYPE"))
 	apply_prefs(Prefs.load_prefs(state_path))
 	setup.start()
@@ -152,8 +165,10 @@ func apply_prefs(p: Dictionary) -> void:
 	var im := get_node_or_null("/root/InputMode")
 	if im:
 		im.set_glyph_style(p.glyph_style)
-	if _picture_old.is_empty():          # not while a new picture is on trial
-		setup.configure(p)
+	var trial: String = setup.display_mode
+	setup.configure(p)                   # sound output and volume always
+	if not _picture_old.is_empty():
+		setup.display_mode = trial       # a new picture is on trial: the checks hold it
 
 
 # Picture (D79): try the new mode, then ask to keep it. Cancel, Back, Home or
@@ -173,22 +188,28 @@ func _on_picture_done(r: Dictionary) -> void:
 		toast.push("Couldn't change the picture")
 		_undo_picture()
 		return
+	if not r.changed and r.get("fallback", false):
+		# The TV refused the one asked for and stayed on the fallback: keep
+		# that (it is what's on screen), but say so.
+		toast.push("The TV didn't take %s" % Display.describe(_picture_new))
 	_picture_new = r.mode
 	if not r.changed:
 		_keep_picture()                  # it was on that already
 		return
-	if state.screen != State.Screen.SETTINGS:
-		_undo_picture()                  # left Settings while it changed
+	if state.screen != State.Screen.SETTINGS or is_hidden:
+		_undo_picture()                  # left Settings, or opened a panel, while it changed
 		return
 	state.ask("picture")
 	_picture_timer.start(Tokens.PICTURE_KEEP)
 
 
-# Wi-Fi (D81): a saved network whose password stopped working asks for it.
+# Wi-Fi (D81): a saved network whose password stopped working asks for it,
+# unless the keyboard is already open for something else.
 func _on_wifi_done(r: Dictionary) -> void:
 	if r.ok:
 		toast.push("Connected to %s" % r.ssid)
-	elif r.error == "password" and not r.get("tried_password", false) and state.screen == State.Screen.SETTINGS:
+	elif r.error == "password" and not r.get("tried_password", false) \
+			and state.screen == State.Screen.SETTINGS and not settings.osk().visible:
 		settings.ask_wifi_password(settings.wifi_net(r.ssid))
 	elif r.error == "password":
 		toast.push("The password for %s didn't work" % r.ssid)
@@ -213,11 +234,21 @@ func _undo_picture() -> void:
 func _on_remote_accept() -> void:
 	if is_hidden:
 		return
+	_remote_key()
 	for down in [true, false]:
 		var ev := InputEventAction.new()
 		ev.action = "accept"
 		ev.pressed = down
 		Input.parse_input_event(ev)
+
+
+# A remote key that only the daemon saw (Power, or an OK that X has no key
+# for). Like any key press it puts the launcher in remote mode, which hides
+# the cursor and stops hover moving the focus.
+func _remote_key() -> void:
+	var im := get_node_or_null("/root/InputMode")
+	if im:
+		im._set_mode(InputModeScript.Mode.REMOTE)
 
 
 # Return to Bosca Mor ended with windows still open.
@@ -245,6 +276,8 @@ func _launch(app: Dictionary) -> void:
 
 
 func _launch_panel(app: Dictionary) -> void:
+	if is_hidden:
+		return                           # one is already on its way
 	_panel_running = true
 	_launch(app)
 	_await_window()
@@ -293,7 +326,9 @@ func app_name(app_id: String) -> String:
 
 # Daemon events ----------------------------------------------------------------
 
-func _on_app_exited(_app_id: String, _code: int) -> void:
+func _on_app_exited(app_id: String, _code: int) -> void:
+	if app_id != _launched.get("id", ""):
+		return       # D86: an older app (replaced by this launch, or quit by itself)
 	if _panel_running:
 		_panel_running = false
 		show_launcher()
@@ -328,12 +363,26 @@ func _on_show_home() -> void:
 # Power from the daemon shows the launcher and opens the confirm, whatever
 # was on screen (SPEC: "Power, in any state").
 func _on_power_pressed() -> void:
+	_remote_key()
+	# The last frame drawn was black, so there is nothing to blur yet.
+	var from_black: bool = is_hidden or home.is_launching() or state.screen in [State.Screen.DESKTOP, State.Screen.OFF]
 	show_launcher()
 	if home.is_launching():
 		home.play_return()
 	if state.screen in [State.Screen.DESKTOP, State.Screen.OFF]:
 		state.show_home()
+	_blur_stale = from_black
 	state.handle("power")
+	_blur_stale = false
+
+
+# The power command didn't run: back to Home with a toast, not "Shutting
+# down" for ever.
+func _on_power_failed(kind: String) -> void:
+	if state.screen != State.Screen.OFF:
+		return
+	state.show_home()
+	toast.push("Couldn't restart" if kind == "restart" else "Couldn't power off")
 
 
 # Hidden and shown (SPEC Resource use) ------------------------------------------
@@ -351,6 +400,7 @@ func hide_launcher(minimize := true) -> void:
 # Off screen as far as the daemon is concerned: it acts on Home now.
 func _leave() -> void:
 	is_hidden = true
+	settings.accepting_input = false   # a panel on its way: Settings stays drawn, but takes nothing
 	daemon.set_visible(false)
 	home.save_focus()
 	sidebar.close(false)
@@ -379,9 +429,8 @@ func show_launcher() -> void:
 	waiting_for_window = false
 	_stop_loader()
 	get_tree().paused = false
-	Motion.stop(_cover, "color:a")
-	_cover.color.a = 0.0
-	_cover.visible = false
+	_clear_cover()
+	settings.accepting_input = state.screen == State.Screen.SETTINGS
 	if _asleep:
 		_asleep = false
 		OS.low_processor_usage_mode_sleep_usec = _shown_sleep_usec
@@ -394,11 +443,19 @@ func show_launcher() -> void:
 	setup.check()                      # an app or the TV may have changed the picture
 
 
+func _clear_cover() -> void:
+	Motion.stop(_cover, "color:a")
+	_cover.color.a = 0.0
+	_cover.visible = false
+
+
 func _unhandled_input(ev: InputEvent) -> void:
-	if home.is_launching():
-		return
+	if home.is_launching() or is_hidden:
+		return                         # an app or panel is on its way
 	var s := state.screen
 	if ev is InputEventMouseMotion:
+		if s in [State.Screen.CONFIRM, State.Screen.STILL_OPEN] and _hover_held_at(ev.position):
+			return
 		if _pointer_mode():
 			if s == State.Screen.SIDEBAR:
 				var i: int = sidebar.item_at(ev.position)
@@ -440,9 +497,35 @@ func _unhandled_input(ev: InputEvent) -> void:
 			return
 
 
+# True while hover may not move a dialog's focus: the first motion after it
+# opens marks where the pointer rests, and only a move of POINTER_MOVE from
+# there lets hover act.
+func _hover_held_at(pos: Vector2) -> bool:
+	if not _hover_held:
+		return false
+	if not _hover_anchored:
+		_hover_anchored = true
+		_hover_from = pos
+		return true
+	if pos.distance_to(_hover_from) < Tokens.POINTER_MOVE:
+		return true
+	_hover_held = false
+	return false
+
+
+func _capture_blur() -> void:
+	blur_captures += 1
+	sidebar.capture()
+
+
 func _on_changed(to: State.Screen, from: State.Screen) -> void:
 	home.accepting_input = to == State.Screen.HOME
 	settings.accepting_input = to == State.Screen.SETTINGS
+	if from == State.Screen.DESKTOP and to != State.Screen.DESKTOP:
+		_clear_cover()                   # left during the fade to black
+	if to in [State.Screen.CONFIRM, State.Screen.STILL_OPEN]:
+		_hover_held = true
+		_hover_anchored = false
 	if from == State.Screen.CONFIRM and state.confirm_kind == "picture" and not _picture_old.is_empty():
 		_undo_picture()                  # left the confirm without Keep
 	if to == State.Screen.SETTINGS:
@@ -467,13 +550,18 @@ func _on_changed(to: State.Screen, from: State.Screen) -> void:
 				show_launcher()
 				home.play_return()     # SPEC: Home with the return fade
 		State.Screen.SIDEBAR:
-			if not sidebar.has_capture():
-				sidebar.capture()
+			# Back from the confirm, the last frame drawn has the dialog in it:
+			# with no blur kept, the sidebar dims Home as it is.
+			if not sidebar.has_capture() and from != State.Screen.CONFIRM:
+				_capture_blur()
 			confirm.close(animate)
 			sidebar.open(animate)
 		State.Screen.CONFIRM:
-			if from in [State.Screen.HOME, State.Screen.SETTINGS]:
-				sidebar.capture()     # ready for Back, which returns to the sidebar
+			# Only the power confirms go back to the sidebar (Back or Cancel), and
+			# only a Home already on screen is worth blurring for it.
+			if state.confirm_kind in ["poweroff", "restart"] and from in [State.Screen.HOME, State.Screen.SETTINGS] \
+					and not _blur_stale:
+				_capture_blur()       # ready for Back, which returns to the sidebar
 			sidebar.close(animate, true)
 			confirm.open(state.confirm_kind, animate, still.apps.size(), _removing.get("name", ""))
 		State.Screen.STILL_OPEN:

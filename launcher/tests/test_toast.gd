@@ -1,11 +1,15 @@
 extends "res://tests/test_case.gd"
 
 # Toasts (launch failed, no window within 15 s, memory warning) and the
-# launch timeout that app_window cancels.
+# launch timeout that app_window cancels; and Settings' own messages (Wi-Fi,
+# the picture) with the prefs they go with.
 
 const MainScene := preload("res://scenes/main.tscn")
 const Apps := preload("res://scripts/apps.gd")
 const Tokens := preload("res://theme/tokens.gd")
+const State := preload("res://scripts/state.gd")
+const Prefs := preload("res://scripts/prefs.gd")
+const SettingsView := preload("res://scripts/settings.gd")
 
 var main: Control
 var toast: Control
@@ -178,4 +182,82 @@ func test_toast_dropped_when_launcher_hides() -> void:
 	eq(toast.text, "", "the one on screen was seen")
 	main.daemon._dispatch({"evt": "app_exited", "id": "plex", "code": 0})
 	eq(toast.text, "two", "the rest shows on return")
+	_teardown()
+
+
+# D86: the daemon starts the new app only once the one it replaces has gone
+# (up to its grace), so the launcher's deadline starts again from that exit.
+func test_replaced_exit_restarts_the_deadline() -> void:
+	await _setup()
+	_launch(1)
+	_advance(int(Tokens.LAUNCH_BACKUP * 1000) - 500)
+	main.daemon._dispatch({"evt": "app_exited", "id": "youtube", "code": 0, "replaced": true})
+	_advance(1000)
+	check(main.is_hidden, "still waiting for Plex")
+	eq(toast.text, "", "no timeout yet")
+	eq(main.daemon.waiting_id, "plex", "waiting")
+	_advance(int(Tokens.LAUNCH_BACKUP * 1000))
+	eq(toast.text, "Plex took too long to open", "the deadline still comes")
+	_teardown()
+
+
+# D81's password prompt waits its turn: a keyboard already open for
+# something else keeps its text, and a toast says what happened.
+func test_wifi_password_prompt_never_takes_over_the_keyboard() -> void:
+	await _setup()
+	main.state.go(State.Screen.SETTINGS)
+	var st: Control = main.settings
+	st._osk_for = "url"
+	st.osk().open("Browser start page", "abc")
+	main._on_wifi_done({"ok": false, "ssid": "Old Flat", "error": "password", "tried_password": false})
+	eq(st._osk_for, "url", "still typing the start page")
+	eq(st.osk().text, "abc", "text kept")
+	eq(toast.text, "The password for Old Flat didn't work", "toast instead")
+	_teardown()
+
+
+# Picture: the TV refused 1080p and stayed on 720p, so nothing changed on
+# screen. That is kept, with a toast, not saved in silence.
+func test_picture_fallback_says_so() -> void:
+	await _setup()
+	main.state.go(State.Screen.SETTINGS)
+	main._picture_old = "auto"
+	main._picture_new = "1920x1080@60"
+	main._on_picture_done({"ok": true, "mode": "1280x720@60", "changed": false, "fallback": true})
+	eq(toast.text, "The TV didn't take 1920 x 1080 at 60 Hz", "toast")
+	eq(main.settings.prefs.display_mode, "1280x720@60", "kept what is on screen")
+	eq(main._picture_old, "", "trial over")
+	eq(main.state.screen, State.Screen.SETTINGS, "no confirm")
+	_teardown()
+
+
+# A Sound change while a new picture is on trial still reaches SystemSetup;
+# only the picture waits for Keep.
+func test_sound_change_during_a_picture_trial() -> void:
+	await _setup()
+	main._picture_old = "1920x1080@60"
+	main.setup.display_mode = "1280x720@60"       # what try_picture holds
+	var p: Dictionary = Prefs.load_prefs(main.state_path)
+	p.sound_output = "auto"
+	p.volume = 50
+	main.apply_prefs(p)
+	eq(main.setup.sound_output, "auto", "sound output applied")
+	eq(main.setup.volume, 50, "volume applied")
+	eq(main.setup.display_mode, "1280x720@60", "the trial picture held")
+	_teardown()
+
+
+# A picture that changed while a Cinnamon panel opened goes back: its
+# question would sit behind the panel with its timer paused.
+func test_picture_done_behind_a_panel_goes_back() -> void:
+	await _setup()
+	main.state.go(State.Screen.SETTINGS)
+	main._picture_old = "1920x1080@60"
+	main._picture_new = "1280x720@60"
+	main.setup.display_mode = "1280x720@60"
+	main._launch_panel(SettingsView.PANELS.network)
+	main._on_picture_done({"ok": true, "mode": "1280x720@60", "changed": true, "fallback": false})
+	eq(main.state.screen, State.Screen.SETTINGS, "no confirm behind the panel")
+	eq(main._picture_old, "", "trial over")
+	eq(main.setup.display_mode, "1920x1080@60", "old picture back")
 	_teardown()

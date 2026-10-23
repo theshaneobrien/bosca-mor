@@ -37,6 +37,7 @@ func _setup(token := "secret-token", ipc := false) -> void:
 	client.launch_failed.connect(func(id, e): got.append(["launch_failed", id, e]))
 	client.memory_warning.connect(func(id, mb): got.append(["memory_warning", id, mb]))
 	client.still_open.connect(func(apps): got.append(["still_open", apps]))
+	client.power_failed.connect(func(kind): got.append(["power_failed", kind]))
 	for i in 20:
 		client.poll()
 		if server.is_connection_available():
@@ -139,6 +140,45 @@ func test_events_come_in() -> void:
 	eq(got, [["show_home"], ["power_pressed"], ["app_exited", "plex", 0],
 		["launch_failed", "x", "nope"], ["memory_warning", "", 400],
 		["still_open", [{"wid": "0x3a00007", "name": "Writer", "icon": "", "asking": true}]]], "events")
+	_teardown()
+
+
+# D86: an app ended because a new launch replaced it says nothing to Main,
+# and the launch still waits for its window.
+func test_replaced_exit_is_not_an_exit() -> void:
+	_setup()
+	client.launch({"id": "plex", "argv": ["plex"]})
+	_say('{"evt":"app_exited","id":"plex","code":-15,"replaced":true}')
+	eq(got, [], "nothing emitted")
+	eq(client.waiting_id, "plex", "still waiting for the new one's window")
+	_say('{"evt":"app_exited","id":"plex","code":0}')
+	eq(got, [["app_exited", "plex", 0]], "its own exit is")
+	eq(client.waiting_id, "", "and ends the wait")
+	_teardown()
+
+
+func test_power_failed_event() -> void:
+	_setup()
+	_say('{"evt":"power_failed","action":"reboot"}\n{"evt":"power_failed","action":"poweroff"}')
+	eq(got, [["power_failed", "restart"], ["power_failed", "poweroff"]], "named the way the launcher does")
+	_teardown()
+
+
+# A read can end inside a character: lines are decoded whole.
+func test_a_character_split_across_reads() -> void:
+	_setup()
+	var bytes := '{"evt":"still_open","apps":[{"wid":"0x1","name":"Éditeur de texte","icon":"","asking":false}]}\n'.to_utf8_buffer()
+	var cut := bytes.find(0xC3) + 1     # between the two bytes of É
+	conn.put_data(bytes.slice(0, cut))
+	for i in 5:
+		OS.delay_msec(20)
+		client.poll()
+	eq(got, [], "half a line: nothing yet")
+	conn.put_data(bytes.slice(cut))
+	for i in 5:
+		OS.delay_msec(20)
+		client.poll()
+	eq(got, [["still_open", [{"wid": "0x1", "name": "Éditeur de texte", "icon": "", "asking": false}]]], "decoded whole")
 	_teardown()
 
 

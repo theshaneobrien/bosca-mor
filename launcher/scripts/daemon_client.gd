@@ -11,9 +11,6 @@ const Apps := preload("res://scripts/apps.gd")
 const Paths := preload("res://scripts/paths.gd")
 const Tokens := preload("res://theme/tokens.gd")
 
-const POLL_S := 0.1                 # SPEC Resource use: poll the socket every 100 ms
-const RETRY_S := 1.0
-
 ## The daemon wants Home shown: Home or Guide pressed while hidden, or an app
 ## closed by Home.
 signal show_home
@@ -34,6 +31,9 @@ signal app_window(app_id: String)
 signal launch_timed_out(app_id: String)
 ## OK on a remote whose key X doesn't map (KEY_OK, KEY_SELECT, D82).
 signal accept_pressed
+## Power off or restart did not happen: no daemon on the box, or the daemon
+## said the command failed. kind is "poweroff" or "restart".
+signal power_failed(kind: String)
 signal connected_changed(connected: bool)
 
 ## Seconds before the stand-in pretends an app exited or a power-off was a
@@ -57,7 +57,7 @@ var _window_deadline := 0
 var _peer: StreamPeerTCP
 var _token := ""
 var _sent_token := false
-var _buf := ""
+var _buf := PackedByteArray()      # bytes read but not yet a whole line
 var _retry_in := 0.0
 var _visible := true
 var _timer: Timer
@@ -66,7 +66,7 @@ var _timer: Timer
 func _ready() -> void:
 	# The poll timer is the one node that runs while the tree is paused.
 	_timer = Timer.new()
-	_timer.wait_time = POLL_S
+	_timer.wait_time = Tokens.DAEMON_POLL
 	_timer.process_mode = PROCESS_MODE_ALWAYS
 	_timer.timeout.connect(poll)
 	add_child(_timer)
@@ -96,21 +96,27 @@ func launch(app: Dictionary) -> void:
 ## kind is "poweroff" or "restart". Only ever after the confirm.
 func power(kind: String) -> void:
 	_record(["power", kind])
-	if not _send({"cmd": "power", "action": "reboot" if kind == "restart" else kind}):
-		_later(show_home.emit)
+	if _send({"cmd": "power", "action": "reboot" if kind == "restart" else kind}):
+		return
+	if stand_in:
+		_later(show_home.emit)         # the dev machine: as if it were a dry run (D28)
+		return
+	# On the box with no daemon nothing can power off: say so, like a launch (D66).
+	push_warning("no daemon: cannot %s" % kind)
+	power_failed.emit.call_deferred(kind)
 
 
 func show_desktop() -> void:
 	_record(["show_desktop"])
 	_visible = false
-	_send({"cmd": "desktop"})
+	_send_hiding({"cmd": "desktop"})
 
 
 ## Show me: raise a window still open (the launcher has hidden).
 func show_window(wid: String) -> void:
 	_record(["show_window", wid])
 	_visible = false
-	_send({"cmd": "show_window", "wid": wid})
+	_send_hiding({"cmd": "show_window", "wid": wid})
 
 
 ## Close anyway, after the confirm. The daemon uses xkill -id per window.
@@ -123,7 +129,14 @@ func force_close(wids: Array) -> void:
 func back_to_desktop() -> void:
 	_record(["back_to_desktop"])
 	_visible = false
-	_send({"cmd": "desktop", "notify": false})
+	_send_hiding({"cmd": "desktop", "notify": false})
+
+
+# The desktop still works with no daemon on the box (Cinnamon's own menus are
+# the way out then), but Home can't bring the launcher back: say so in the log.
+func _send_hiding(msg: Dictionary) -> void:
+	if not _send(msg) and not stand_in:
+		push_warning("no daemon: Home won't bring the launcher back; click it in the taskbar")
 
 
 ## Tells the daemon whether the launcher is on screen, so it knows whether
@@ -200,13 +213,13 @@ func _stop_waiting(app_id: String) -> void:
 		waiting_id = ""
 
 
-## Runs every POLL_S: connects, reads, and dispatches events.
+## Runs every DAEMON_POLL: connects, reads, and dispatches events.
 func poll() -> void:
 	_check_launch()
 	if _peer == null:
-		_retry_in -= POLL_S
+		_retry_in -= Tokens.DAEMON_POLL
 		if _retry_in <= 0.0:
-			_retry_in = RETRY_S
+			_retry_in = Tokens.DAEMON_RETRY
 			_connect()
 		return
 	_peer.poll()
@@ -234,14 +247,14 @@ func _connect() -> void:
 		_peer = null
 		return
 	_sent_token = false
-	_buf = ""
+	_buf = PackedByteArray()
 
 
 func _disconnect() -> void:
 	if _peer:
 		_peer.disconnect_from_host()
 	_peer = null
-	_retry_in = RETRY_S
+	_retry_in = Tokens.DAEMON_RETRY
 	_set_connected(false)
 
 
@@ -270,11 +283,14 @@ func _read() -> void:
 	if got[0] != OK:
 		_disconnect()
 		return
-	_buf += (got[1] as PackedByteArray).get_string_from_utf8()
-	while _buf.contains("\n"):
-		var i := _buf.find("\n")
-		var line := _buf.substr(0, i)
-		_buf = _buf.substr(i + 1)
+	# Decoded a whole line at a time: a read can end inside a character.
+	_buf.append_array(got[1])
+	while true:
+		var i := _buf.find(10)          # "\n"
+		if i < 0:
+			break
+		var line := _buf.slice(0, i).get_string_from_utf8()
+		_buf = _buf.slice(i + 1)
 		var json := JSON.new()
 		if json.parse(line) == OK and json.data is Dictionary:
 			_dispatch(json.data)
@@ -287,6 +303,12 @@ func _dispatch(msg: Dictionary) -> void:
 		"power_confirm":
 			power_pressed.emit()
 		"app_exited":
+			if msg.get("replaced", false):
+				# D86: a new launch ended it. That launch is still on its way, and
+				# the daemon starts it now, so its window deadline starts again too.
+				if not waiting_id.is_empty():
+					_window_deadline = _now_ms() + int(Tokens.LAUNCH_BACKUP * 1000.0)
+				return
 			_stop_waiting(str(msg.get("id", "")))
 			app_exited.emit(str(msg.get("id", "")), int(msg.get("code", 0)))
 		"launch_failed":
@@ -302,6 +324,8 @@ func _dispatch(msg: Dictionary) -> void:
 			still_open.emit(list if list is Array else [])
 		"accept":
 			accept_pressed.emit()
+		"power_failed":
+			power_failed.emit("restart" if str(msg.get("action", "")) in ["reboot", "restart"] else "poweroff")
 		"memory_warning":
 			var app_id = msg.get("id")
 			memory_warning.emit("" if app_id == null else str(app_id), int(msg.get("available_mb", 0)))
