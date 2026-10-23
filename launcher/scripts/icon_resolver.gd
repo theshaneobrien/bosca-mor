@@ -7,7 +7,8 @@
 #      Firefox's logo isn't Netflix's (D41)
 #   4. none: the caller draws the built-in line glyph
 # SVGs are rasterised at the size they are drawn and cached under
-# Paths.icon_cache_dir(), redone when the file or the size changes.
+# Paths.icon_cache_dir(), redone when the file or the size changes. A PNG
+# bigger than the drawn size is scaled down to it.
 extends RefCounted
 
 const Paths := preload("res://scripts/paths.gd")
@@ -134,23 +135,48 @@ static func _desktop_entries() -> Array:
 	return _entries
 
 
-## The icon as a texture about `px` device pixels across. SVGs go through
-## the cache; PNGs load as they are, with mipmaps for scaling down.
-static func texture(path: String, px: int, cache_key: String) -> Texture2D:
+## The icon as a texture about `px` device pixels across: its long side, or
+## its short side when `cover` (full style fills the tile, so the short side
+## is the one drawn at px). SVGs go through the cache; a PNG bigger than that
+## is scaled down to it, with mipmaps for drawing smaller. Each caller that
+## draws at its own size needs its own cache_key.
+static func texture(path: String, px: int, cache_key: String, cover := false) -> Texture2D:
 	if path.get_extension().to_lower() == "svg":
-		return _svg(path, px, cache_key)
+		return _svg(path, px, cache_key, cover)
 	var img := Image.load_from_file(path)
 	if img == null or img.is_empty():
 		return null
+	_shrink(img, px, cover)
 	img.generate_mipmaps()
 	return ImageTexture.create_from_image(img)
 
 
-static func _svg(path: String, px: int, cache_key: String) -> Texture2D:
+static func _side(img: Image, cover: bool) -> int:
+	return mini(img.get_width(), img.get_height()) if cover else maxi(img.get_width(), img.get_height())
+
+
+# A 4000 px press-kit logo would hold 85 MB with mipmaps, so cut it down to
+# the drawn size. Halving first is cheap; Lanczos straight from 4000 px is
+# slow. Never scales up.
+static func _shrink(img: Image, px: int, cover: bool) -> void:
+	var side := _side(img, cover)
+	if px <= 0 or side <= px:
+		return
+	while side >= 2 * px:
+		img.shrink_x2()
+		side = _side(img, cover)
+	var k := float(px) / side
+	img.resize(maxi(1, roundi(img.get_width() * k)), maxi(1, roundi(img.get_height() * k)), Image.INTERPOLATE_LANCZOS)
+
+
+static func _svg(path: String, px: int, cache_key: String, cover := false) -> Texture2D:
+	cache_key = cache_key.validate_filename()   # still_open's key can hold a whole path
 	var f := FileAccess.open(path, FileAccess.READ)
 	if f == null:
 		return null
 	var stamp := "%s|%d|%d|%d" % [path, FileAccess.get_modified_time(path), f.get_length(), px]
+	if cover:
+		stamp += "|cover"
 	f.close()
 	var cached := cache_dir().path_join("%s-%s.png" % [cache_key, stamp.md5_text().left(12)])
 	if FileAccess.file_exists(cached):
@@ -161,14 +187,18 @@ static func _svg(path: String, px: int, cache_key: String) -> Texture2D:
 	var probe := Image.new()
 	if buf.is_empty() or probe.load_svg_from_buffer(buf, 1.0) != OK:
 		return null
-	var scale := float(px) / maxf(probe.get_width(), probe.get_height())
+	var w := float(probe.get_width())
+	var h := float(probe.get_height())
+	var scale := float(px) / (minf(w, h) if cover else maxf(w, h))
 	var img := Image.new()
 	if img.load_svg_from_buffer(buf, scale) != OK:
 		return null
 	img.generate_mipmaps()
 	DirAccess.make_dir_recursive_absolute(cache_dir())
-	for old in DirAccess.get_files_at(cache_dir()):   # an older size or version
-		if old.begins_with(cache_key + "-"):
+	# An older size or version of this key only, named like this one. A bare
+	# prefix would also match "<key>-row-..." or a longer id such as "plex-htpc".
+	for old in DirAccess.get_files_at(cache_dir()):
+		if old.begins_with(cache_key + "-") and old.length() == cached.get_file().length():
 			DirAccess.remove_absolute(cache_dir().path_join(old))
 	img.save_png(cached)
 	return ImageTexture.create_from_image(img)

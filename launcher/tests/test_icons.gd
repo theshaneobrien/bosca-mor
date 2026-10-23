@@ -6,6 +6,7 @@ const Apps := preload("res://scripts/apps.gd")
 const Tokens := preload("res://theme/tokens.gd")
 
 const SVG := '<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48"><rect width="48" height="48" fill="#e50914"/></svg>'
+const WIDE_SVG := '<svg xmlns="http://www.w3.org/2000/svg" width="160" height="90" viewBox="0 0 160 90"><rect width="160" height="90" fill="#e50914"/></svg>'
 
 var root: String
 
@@ -48,10 +49,10 @@ func _write(path: String, text: String) -> String:
 	return path
 
 
-func _png(path: String, px: int) -> String:
+func _png(path: String, px: int, h := 0) -> String:
 	path = root.path_join(path)
 	DirAccess.make_dir_recursive_absolute(path.get_base_dir())
-	Image.create(px, px, false, Image.FORMAT_RGBA8).save_png(path)
+	Image.create(px, h if h > 0 else px, false, Image.FORMAT_RGBA8).save_png(path)
 	return path
 
 
@@ -131,12 +132,51 @@ func test_svg_cache() -> void:
 	_teardown()
 
 
-func test_png_keeps_its_size() -> void:
+# Review: a 4000 px drop-in PNG loaded at full size held 85 MB.
+func test_png_scaled_to_drawn_size() -> void:
 	_setup()
-	var png := _png("dropin/plex.png", 600)
-	var tex := IconResolver.texture(png, 291, "plex")
-	eq(tex.get_width(), 600, "PNG loaded as supplied, mipmapped down")
+	var tex := IconResolver.texture(_png("dropin/plex.png", 600), 291, "plex")
+	eq(tex.get_width(), 291, "a big PNG comes down to the drawn size")
 	check(tex.get_image().has_mipmaps(), "mipmaps")
+	var wide := _png("dropin/wide.png", 1200, 600)
+	eq(IconResolver.texture(wide, 291, "wide").get_size(), Vector2(291, 146), "inset: the long side is drawn at px")
+	eq(IconResolver.texture(wide, 291, "wide", true).get_size(), Vector2(582, 291), "full: the short side is")
+	eq(IconResolver.texture(_png("dropin/small.png", 200), 291, "small").get_width(), 200, "never scaled up")
+	_teardown()
+
+
+# Review: a wide SVG in full style was drawn by its long side, then stretched
+# to cover the tile.
+func test_full_style_svg_covers_by_its_short_side() -> void:
+	_setup()
+	var svg := _write("dropin/wide.svg", WIDE_SVG)
+	var fit := IconResolver.texture(svg, 100, "wide")
+	eq(fit.get_size(), Vector2(100, 56), "inset fits the long side")
+	var cover := IconResolver.texture(svg, 100, "wide", true)
+	eq(cover.get_height(), 100, "full covers with the short side")
+	check(absi(cover.get_width() - 178) <= 1, "and keeps the shape: %s" % cover.get_size())
+	_teardown()
+
+
+# Review: Home and the loader shared a key at two sizes, and the cleanup took
+# every file starting with "<key>-", so each one wiped the other's.
+func test_cache_keys_keep_their_own_files() -> void:
+	_setup()
+	var svg := _write("dropin/plex.svg", SVG)
+	IconResolver.texture(svg, 175, "plex")
+	IconResolver.texture(svg, 156, "plex-loader")
+	IconResolver.texture(svg, 28, "plex-row")
+	IconResolver.texture(svg, 175, "plex-htpc")
+	var files := DirAccess.get_files_at(root.path_join("cache"))
+	eq(files.size(), 4, "one file per key: %s" % [files])
+	IconResolver.texture(svg, 175, "plex")
+	IconResolver.texture(svg, 156, "plex-loader")
+	eq(DirAccess.get_files_at(root.path_join("cache")), files, "both served from the cache")
+	IconResolver.texture(svg, 350, "plex")
+	eq(DirAccess.get_files_at(root.path_join("cache")).size(), 4, "a new size replaces only its own key's file")
+	IconResolver.texture(svg, 36, "still-" + svg)
+	var still := Array(DirAccess.get_files_at(root.path_join("cache"))).filter(func(f): return f.begins_with("still-"))
+	eq(still.size(), 1, "a key holding a whole path is still cached")
 	_teardown()
 
 

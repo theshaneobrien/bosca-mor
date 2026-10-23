@@ -65,7 +65,16 @@ func _ready() -> void:
 	_build()
 	UI.ignore_mouse(self)
 	_scale = UI.display_scale(self)
+	get_viewport().size_changed.connect(_on_size_changed)
 	set_focus(0)
+
+
+# The TV mode can change after start (D79): draw the glyphs again for it.
+func _on_size_changed() -> void:
+	var s := UI.display_scale(self)
+	if not is_equal_approx(s, _scale):
+		_scale = s
+		set_focus(focus)
 
 
 func has_capture() -> bool:
@@ -77,13 +86,27 @@ func capture() -> void:
 	_blur.texture = null
 	if DisplayServer.get_name() == "headless":
 		return
-	var tex := _home.get_viewport().get_texture()
+	var tex := get_viewport().get_texture()
 	var img := tex.get_image() if tex else null
 	if img == null or img.is_empty():
 		return
+	# Main is scaled by Screen size (D33) and _blur is drawn inside it, so keep
+	# only the part of the screen this panel covers, or Home is scaled twice.
+	var r := capture_rect(img.get_size())
+	if r.has_area() and r.size != img.get_size():
+		img = img.get_region(r)
 	for i in 2:   # two halvings average 2x2 blocks, so nothing aliases
 		img.resize(maxi(img.get_width() / 2, 1), maxi(img.get_height() / 2, 1), Image.INTERPOLATE_BILINEAR)
 	_blur.texture = ImageTexture.create_from_image(img)
+
+
+## The part of the viewport's picture (img_size pixels) that this sidebar,
+## and so the blur, covers.
+func capture_rect(img_size: Vector2i) -> Rect2i:
+	var xf := get_viewport().get_final_transform() * get_global_transform_with_canvas()
+	var on_screen := (xf * Rect2(Vector2.ZERO, size)).abs()
+	var r := Rect2i(Vector2i(on_screen.position.round()), Vector2i(on_screen.size.round()))
+	return r.intersection(Rect2i(Vector2i.ZERO, img_size))
 
 
 func open(animate: bool) -> void:
@@ -155,9 +178,11 @@ func item_at(pos: Vector2) -> int:
 	return -1
 
 
-## True for the dimmed area beside the panel.
+## True anywhere outside the panel: the dimmed area beside it, or the border
+## round a UI shrunk by Screen size. The panel's global rect carries Main's
+## scale, as item_at does.
 func is_on_dim(pos: Vector2) -> bool:
-	return pos.x >= Tokens.SIDEBAR_WIDTH
+	return not _panel.get_global_rect().has_point(pos)
 
 
 # Build -----------------------------------------------------------------------

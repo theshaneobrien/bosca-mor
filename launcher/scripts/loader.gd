@@ -74,7 +74,7 @@ func _fill(app: Dictionary) -> void:
 	if app.has("argv"):
 		var found := IconResolver.find(app)
 		if found:
-			tex = IconResolver.texture(found.path, roundi(Tokens.TILE * Tokens.ICON_INSET * _scale), app.get("id", "app"))
+			tex = IconResolver.texture(found.path, roundi(Tokens.TILE * Tokens.ICON_INSET * _scale), app.get("id", "app") + "-loader")
 	if tex:
 		_icon.texture = tex
 		_icon.custom_minimum_size = Vector2.ONE * Tokens.TILE * Tokens.ICON_INSET

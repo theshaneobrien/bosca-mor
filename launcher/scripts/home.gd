@@ -141,7 +141,7 @@ func _unhandled_input(ev: InputEvent) -> void:
 			var i := tile_at(ev.position)
 			if i < 0:
 				return
-			set_focus(i)
+			set_focus(i, true, true)
 		launch()
 	else:
 		return
@@ -210,13 +210,22 @@ func launch() -> void:
 	Motion.to(_fade, "color:a", 1.0, "launch").finished.connect(launch_faded.emit)
 
 
-## Back from an app: fade in from black with the same tile focused.
+## Back from an app: fade in from black with the same tile focused. A launch
+## cut short mid-zoom (it failed, or Home or Power came in its first 350 ms)
+## turns back from where the fade and zoom stand (SPEC Motion: never from the
+## end state).
 func play_return() -> void:
 	_launching = false
-	Motion.stop(_tile(focus), "scale")
-	_tile(focus).scale = Vector2.ONE * Tokens.TILE_FOCUS_SCALE
+	if not _fade.visible:
+		_fade.color.a = 1.0                 # from Desktop: start black
+	if not tiles.is_empty():
+		var rest := Vector2.ONE * Tokens.TILE_FOCUS_SCALE
+		if _fade.color.a < 1.0:
+			Motion.to(_tile(focus), "scale", rest, "return", true)
+		else:
+			Motion.stop(_tile(focus), "scale")
+			_tile(focus).scale = rest       # behind full black, so no one sees it
 	_fade.visible = true
-	_fade.color.a = 1.0
 	Motion.to(_fade, "color:a", 0.0, "return").finished.connect(func(): _fade.visible = false)
 
 
@@ -254,7 +263,7 @@ func resolve_dwell() -> void:
 		return
 	var left: int = int(Tokens.HOVER_DWELL * 1000) - (im.now_ms() - _hover_since)
 	if left <= 0:
-		set_focus(_hover)
+		set_focus(_hover, true, true)
 		_save_timer.start()
 	elif _dwell_timer.is_inside_tree():
 		# The timer can fire a frame before the clock agrees (it counts from
@@ -268,8 +277,15 @@ func _input_mode() -> Node:
 
 
 
-func set_focus(i: int, animate := true) -> void:
+## keep_row is for the pointer: it picked a tile it can see, so the row only
+## scrolls if that tile is not fully on screen. Sliding the row would put
+## another tile under a still pointer, and jitter or a click would then pick
+## that one. Keys, pads and the wheel keep the CAROUSEL_LEAD rule.
+func set_focus(i: int, animate := true, keep_row := false) -> void:
 	if apps.is_empty():
+		for p in _pages:                # nothing to show: no stale name over an empty row
+			for n in ["Kind", "Name", "Desc"]:
+				(p.get_node(n) as Label).text = ""
 		return
 	var old := focus
 	focus = clampi(i, 0, apps.size() - 1)
@@ -279,7 +295,12 @@ func set_focus(i: int, animate := true) -> void:
 	if animate and focus == old:
 		return
 	_show_hero(apps[focus], animate)
-	var strip_x := Tokens.PAD_X - maxi(0, focus - Tokens.CAROUSEL_LEAD) * (Tokens.TILE + Tokens.TILE_GAP)
+	var step := Tokens.TILE + Tokens.TILE_GAP
+	var strip_x := Tokens.PAD_X - maxi(0, focus - Tokens.CAROUSEL_LEAD) * step
+	if keep_row:
+		var left := _strip_x + focus * step     # where the tile rests now
+		if left >= 0.0 and left + Tokens.TILE <= size.x:
+			strip_x = _strip_x
 	var moved := strip_x != _strip_x
 	_strip_x = strip_x
 	if animate:
@@ -421,12 +442,24 @@ func _build_hero_page() -> VBoxContainer:
 func _build_row() -> Control:
 	var row := Control.new()
 	row.custom_minimum_size.y = Tokens.ROW_HEIGHT
-	row.clip_contents = true
+
+	# Clip sideways (the sidebar shrinks Home, and tiles off the screen must
+	# not show in its margins), but reach up as far as the launch zoom's tile
+	# and ring go, so they are not cut flat at the top of the row.
+	var outer := Tokens.TILE + Tokens.RING_GAP + Tokens.RING_WIDTH
+	var room := maxi(0, ceili(outer * Tokens.LAUNCH_SCALE) - Tokens.TILE - Tokens.ROW_TOP)
+	var clip := Control.new()
+	clip.name = "Clip"
+	clip.clip_contents = true
+	clip.mouse_filter = MOUSE_FILTER_IGNORE
+	clip.set_anchors_preset(PRESET_FULL_RECT)
+	clip.offset_top = -room
+	row.add_child(clip)
 
 	_strip = HBoxContainer.new()
 	_strip.add_theme_constant_override("separation", Tokens.TILE_GAP)
-	_strip.position = Vector2(Tokens.PAD_X, Tokens.ROW_TOP)
-	row.add_child(_strip)
+	_strip.position = Vector2(Tokens.PAD_X, Tokens.ROW_TOP + room)
+	clip.add_child(_strip)
 
 	for app in apps:
 		_strip.add_child(_build_tile(app))
@@ -594,7 +627,7 @@ func _raster_glyphs() -> void:
 		var found := IconResolver.find(app)
 		if found:
 			var logical: float = Tokens.TILE if full_style else Tokens.TILE * Tokens.ICON_INSET
-			tex = IconResolver.texture(found.path, roundi(logical * s), app.id)
+			tex = IconResolver.texture(found.path, roundi(logical * s), app.id, full_style)
 		glyph.visible = tex == null
 		inset.visible = tex != null and not full_style
 		clip.visible = tex != null and full_style
