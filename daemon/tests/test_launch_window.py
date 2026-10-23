@@ -13,6 +13,7 @@ from test_return import FakeX  # noqa: E402
 NOTIFICATION = "0x5800009"
 LAUNCHER = "0x5200005"
 PLEX = "0x6000003"
+PLEX_DIALOG = "0x6000004"    # a dialog transient for PLEX
 SPLASH = "0x6200001"
 QT_FRAMELESS = "0x6400004"   # _KDE_NET_WM_WINDOW_TYPE_OVERRIDE, then NORMAL
 QT_UTILITY = "0x6400005"     # UTILITY, the KDE atom, then NORMAL
@@ -141,6 +142,26 @@ class TestGiveUp(LaunchCase):
         self.at(15.0)
         self.assertEqual(self.d.events("launch_timeout"), [], "Home is already ending it")
 
+    def test_timeout_on_the_desktop_runs_no_return(self):
+        # A slow keep_on_home app: Home on its loading screen, then Desktop.
+        # The 15 s give-up ends it, but nobody pressed Home on the desktop.
+        acted = []
+        self.d.act = acted.append
+        self.d.app.keep_on_home = True
+        self.d.handle({"cmd": "state", "visible": False})
+        self.at(1.0)
+        self.d.on_home()
+        self.d.handle({"cmd": "state", "visible": True})
+        self.d.handle({"cmd": "desktop", "notify": False})
+        self.at(15.0)
+        self.assertEqual(self.d.events("launch_timeout"), [{"evt": "launch_timeout", "id": "plex"}])
+        self.d.clock = None
+        self.assertTrue(self.d.pump(lambda: self.d.app is None))
+        self.assertEqual(acted, [], "Firefox, Writer and the editor are left open")
+        self.assertIsNone(self.d.returning)
+        self.assertEqual(len(self.d.events("show")), 1, "only the Home press")
+        self.assertTrue(self.d.desktop, "the viewer stays on the desktop")
+
     def test_launch_while_the_timed_out_app_closes_sends_no_show(self):
         # "Plex took too long to open", and the viewer picks it again at
         # once, inside the SIGTERM grace (D86).
@@ -233,6 +254,35 @@ class TestLauncherBack(LaunchCase):
         self.assertEqual([s for s, _ in self.d.signals], [signal.SIGTERM],
                          "not left running unseen behind the launcher")
 
+    def test_kept_app_window_on_the_desktop_is_not_raised(self):
+        # Home on the loading screen of a keep_on_home app, then Desktop:
+        # its window maps while the viewer uses the desktop.
+        self.d.app.keep_on_home = True
+        self.d.handle({"cmd": "state", "visible": False})
+        self.at(1.0)
+        self.d.on_home()
+        self.d.handle({"cmd": "state", "visible": True})
+        self.d.handle({"cmd": "desktop", "notify": False})
+        self.d.open_windows.append(PLEX)
+        self.at(1.5)
+        self.at(1.5 + bi.APP_REVEAL_S)
+        self.assertEqual(self.d.events("app_window"), [{"evt": "app_window", "id": "plex"}])
+        self.assertEqual(self.raises(), [])
+        self.assertEqual(self.d.signals, [], "keep_on_home: it runs on")
+        self.assertIsNone(self.d.app.activate_until, "no focus hand-off")
+
+    def test_window_on_the_desktop_ends_an_app_without_keep(self):
+        # Power during the launch fade (no hidden-to-shown change), Cancel,
+        # then Desktop, and the app's window maps after that.
+        self.d.visible = True
+        self.d.handle({"cmd": "desktop", "notify": False})
+        self.d.open_windows.append(PLEX)
+        self.at(0.5)
+        self.at(0.5 + bi.APP_REVEAL_S)
+        self.assertEqual(self.raises(), [])
+        self.assertEqual(self.d.events("app_window"), [{"evt": "app_window", "id": "plex"}])
+        self.assertEqual([s for s, _ in self.d.signals], [signal.SIGTERM])
+
 
 class TestClosingDoesNotSpin(LaunchCase):
     """Home while the reveal or the focus hand-off is due: the loop wakes
@@ -318,6 +368,24 @@ class TestFirstWindowGone(LaunchCase):
         self.at(2.0 + bi.APP_REVEAL_S)
         self.assertIsNone(self.d.app.activate_until, "the main window has the focus")
 
+    def test_window_mapped_again_at_the_reveal_is_raised(self):
+        # A Qt app unmaps its window to change its flags and maps it again,
+        # with the same id, just as the reveal looks for it.
+        self.d.active = LAUNCHER
+        self.d.open_windows.append(PLEX)
+        self.at(0.5)
+        self.d.open_windows.remove(PLEX)
+        self.at(0.5 + bi.APP_REVEAL_S)
+        self.assertEqual(self.d.events("app_window"), [])
+        self.d.open_windows.append(PLEX)
+        self.at(3.0)
+        self.at(3.0 + bi.APP_REVEAL_S)
+        self.assertEqual(self.d.events("app_window"), [{"evt": "app_window", "id": "plex"}])
+        self.assertIn(["wmctrl", "-i", "-a", PLEX], self.d.ran)
+        self.at(15.0)
+        self.assertEqual(self.d.events("launch_timeout"), [])
+        self.assertEqual(self.d.signals, [])
+
     def test_splash_watch_has_a_limit(self):
         self.d.open_windows.append(SPLASH)
         self.d.active = SPLASH
@@ -350,6 +418,74 @@ class TestUnreadWindow(LaunchCase):
         dead.clear()
         self.at(1.0)
         self.assertIsNotNone(self.d.app.reveal_at, "read on the next poll")
+
+    def test_failed_read_at_the_reveal_still_raises(self):
+        # Seen at 0.5 s; at the reveal its xprop read fails once (the 2 s
+        # timeout, or a fork failure), though the window is still listed.
+        self.d.active = LAUNCHER
+        self.d.open_windows.append(PLEX)
+        self.at(0.5)
+        real = self.d.run_capture
+        fail = {PLEX}
+
+        def capture(argv):
+            if argv[:2] == ["xprop", "-id"] and argv[2] in fail:
+                fail.discard(argv[2])
+                return ""
+            return real(argv)
+        self.d.run_capture = capture
+        self.at(0.5 + bi.APP_REVEAL_S)
+        self.assertIn(["wmctrl", "-i", "-a", PLEX], self.d.ran)
+        self.assertEqual(self.d.events("app_window"), [{"evt": "app_window", "id": "plex"}])
+        self.at(15.0)
+        self.assertEqual(self.d.events("launch_timeout"), [])
+        self.assertEqual(self.d.signals, [])
+
+
+class TestWhichWindow(LaunchCase):
+    """The window raised is the app's first, while it stays up: a second
+    window or a startup dialog doesn't take its place."""
+
+    def raised(self):
+        return [r[3] for r in self.d.ran if r[:3] == ["wmctrl", "-i", "-a"]]
+
+    def test_second_window_does_not_take_the_first_ones_place(self):
+        self.d.active = LAUNCHER
+        self.d.open_windows.append(PLEX)
+        self.at(0.5)
+        self.d.open_windows.append(QT_FRAMELESS)   # a second normal window
+        self.at(1.5)
+        self.at(0.5 + bi.APP_REVEAL_S)
+        self.at(1.0 + bi.APP_REVEAL_S)
+        self.assertEqual(self.raised(), [PLEX, PLEX])
+
+    def test_startup_dialog_does_not_take_the_main_windows_place(self):
+        self.d.active = LAUNCHER
+        self.d.open_windows.append(PLEX)
+        self.at(0.5)
+        self.d.open_windows.append(PLEX_DIALOG)
+        self.at(0.5 + bi.APP_REVEAL_S)
+        self.assertEqual(self.raised(), [PLEX])
+        self.d.active = PLEX_DIALOG     # the dialog took the focus with it
+        self.at(1.0 + bi.APP_REVEAL_S)
+        self.assertIsNone(self.d.app.activate_until, "the app has the focus")
+
+    def test_main_window_over_a_dialog_once_the_splash_has_gone(self):
+        self.d.active = LAUNCHER
+        self.d.open_windows.append(SPLASH)
+        self.at(0.5)
+        self.d.open_windows.remove(SPLASH)
+        self.d.open_windows += [PLEX, PLEX_DIALOG]
+        self.at(0.5 + bi.APP_REVEAL_S)
+        self.assertEqual(self.raised(), [PLEX])
+
+    def test_main_window_over_a_splash_still_up(self):
+        self.d.active = LAUNCHER
+        self.d.open_windows.append(SPLASH)
+        self.at(0.5)
+        self.d.open_windows.append(PLEX)
+        self.at(0.5 + bi.APP_REVEAL_S)
+        self.assertEqual(self.raised(), [PLEX])
 
     def test_frameless_qt_window_counts(self):
         self.d.open_windows.append(QT_FRAMELESS)

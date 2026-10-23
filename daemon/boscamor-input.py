@@ -99,6 +99,9 @@ POWER_COMMANDS = {
     "poweroff": ["systemctl", "poweroff"],
     "reboot": ["systemctl", "reboot"],
 }
+# How long a power command gets to say it was refused. Still running after
+# this, it counts as working: the box is going down.
+POWER_WAIT_S = 5.0
 
 
 def dry_run():
@@ -326,6 +329,8 @@ class App:
         self.deadline = 0.0
         self.killed = False
         self.show_after = False
+        # Home was pressed on the desktop: once the app has gone, Return runs.
+        self.return_after = False
         # Waiting for the first window (D63): the client list at launch, and
         # when to look again or give up. None once a window showed.
         self.known = set()
@@ -340,7 +345,8 @@ class App:
         self.reveal_at = None
         # A keep_on_home app running behind the launcher: its own windows,
         # which Return leaves open, and the viewer's, which Return has asked
-        # to close and which never count as its own.
+        # to close or which were opened on a desktop visit, and which never
+        # count as its own.
         self.owned = set()
         self.not_owned = set()
 
@@ -394,6 +400,19 @@ class Daemon:
                              start_new_session=True)
         except OSError as e:
             log.warning("could not run %s: %s", argv[0], e)
+
+    def run_wait(self, argv):
+        """Runs a helper binary and waits up to POWER_WAIT_S for its exit
+        status. Never through a shell. Still running then counts as 0, and
+        None means it could not start."""
+        try:
+            return subprocess.run(argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                  timeout=POWER_WAIT_S).returncode
+        except subprocess.TimeoutExpired:
+            return 0
+        except OSError as e:
+            log.warning("could not run %s: %s", argv[0], e)
+            return None
 
     def signal_group(self, pgid, sig):
         os.killpg(pgid, sig)
@@ -600,6 +619,8 @@ class Daemon:
             was = self.visible
             self.visible = bool(msg.get("visible"))
             if self.visible:
+                if self.desktop:
+                    self.disown_desktop_windows()
                 self.desktop = False
                 if not was:
                     # The launcher is back on screen, so a Return still waiting
@@ -669,6 +690,7 @@ class Daemon:
         if app and not app.keep_on_home:
             # On the desktop, Return runs once the app has gone (_finish).
             log.info("home: closing %s", app.id)
+            app.return_after = self.desktop
             self.close_app(then_show=True)
             return
         if self.desktop:
@@ -734,10 +756,13 @@ class Daemon:
         return parse_window(self.run_capture(["xprop", "-id", wid] + list(WINDOW_PROPS)))
 
     def pick_app_window(self, app, wids):
-        """The app window to raise: (wid, is_splash) for the newest listed
-        window that wasn't open before the launch, a normal window or dialog
-        over a splash, or None if it has none listed. A splash or updater
-        window can close and give way to the main window."""
+        """The app window to raise: (wid, is_splash), or None if it has none
+        listed. The window already chosen stays while it is listed and is
+        not a splash, so a second window or a startup dialog never takes its
+        place; a failed read of it (xprop timed out) changes nothing.
+        Otherwise the newest listed window that wasn't open before the
+        launch: one with no parent over a dialog, either over a splash. A
+        splash or updater window can close and give way to the main window."""
         if wids is None:
             # No window list to check against: keep the one already seen.
             return (app.activate_wid, False) if app.activate_wid else None
@@ -746,11 +771,14 @@ class Daemon:
             if wid in app.baseline:
                 continue
             props = self.window_props(wid)
+            if wid == app.activate_wid and (
+                    not props["read"] or (is_app_window(props) and not is_splash(props))):
+                return (wid, False)
             if is_app_window(props):
-                found.append((wid, is_splash(props)))
+                found.append((wid, is_splash(props), props["transient_for"] is not None))
         main = [f for f in found if not f[1]]
-        pick = main or found
-        return pick[-1] if pick else None  # the client list runs oldest first
+        pick = [f for f in main if not f[2]] or main or found
+        return pick[-1][:2] if pick else None  # the client list runs oldest first
 
     def reveal_app(self, app):
         """Raise the app's window above the launcher, which waits full
@@ -759,13 +787,16 @@ class Daemon:
         app.reveal_at = None
         if self.visible or self.desktop:
             # D85: the launcher is on screen, so no raise and no hand-off;
-            # app_window still stops the launcher's own deadline. The same
-            # holds while the viewer is on the desktop. An app without
-            # keep_on_home would now run unseen, so it is ended the way Home
-            # ends it. This also covers a launcher that never reported itself
-            # off screen (Power during the launch fade), where there was no
-            # hidden-to-shown change to act on.
-            log.info("%s showed a window, but the launcher is on screen; leaving it behind", app.id)
+            # app_window still stops the launcher's own deadline.
+            # On the desktop the app is not raised either: the viewer is
+            # using the windows there.
+            # In both cases an app without keep_on_home is ended the way
+            # Home ends it, since nobody is waiting for it now. On screen,
+            # that covers a launcher that never reported itself off screen
+            # (Power during the launch fade), so it had no hidden-to-shown
+            # change to act on.
+            log.info("%s showed a window, but the launcher or the desktop is on screen; "
+                     "leaving it behind", app.id)
             self.send({"evt": "app_window", "id": app.id})
             if not app.keep_on_home:
                 self.close_app(then_show=False)
@@ -773,9 +804,12 @@ class Daemon:
         pick = self.pick_app_window(app, self.client_list())
         if pick is None:
             # The window seen a moment ago has gone and nothing has taken its
-            # place yet: watch again, within the launch's own 15 s.
+            # place yet: watch again, within the launch's own 15 s. Every new
+            # window is read again, so the same window mapped again (a Qt
+            # app changing its flags) counts.
             log.info("%s: its first window has gone; watching for the next", app.id)
             app.activate_wid = None
+            app.known = set(app.baseline)
             app.window_deadline = app.launched_at + LAUNCH_TIMEOUT_S
             app.next_window_poll = min(now + WINDOW_POLL_S, app.window_deadline)
             return
@@ -797,7 +831,9 @@ class Daemon:
         windows has the focus (D69)."""
         now = self.now()
         if self.visible or self.desktop:
-            # D85: the launcher is back (or the desktop is showing); leave the app behind it.
+            # D85: the launcher is back, so leave the app behind it. On the
+            # desktop, likewise: activating the app would take the focus
+            # from the viewer's windows.
             app.activate_until = None
             return
         active = self.active_window()
@@ -886,11 +922,23 @@ class Daemon:
         """Going to the desktop with a keep_on_home app running behind the
         launcher: the windows open now that weren't before its launch are
         its own, so Return leaves them open. Windows Return has asked to
-        close before are the viewer's."""
+        close before, or left open on an earlier desktop visit, are the
+        viewer's."""
         app = self.app
         if not app or not app.keep_on_home or app.closing:
             return
         app.owned |= set(self.client_list() or []) - app.baseline - app.not_owned
+
+    def disown_desktop_windows(self):
+        """The launcher is back from the desktop without Return (Power, or
+        the viewer clicked it): the new windows still open, other than a
+        keep_on_home app's own, were opened there by the viewer. The next
+        Desktop visit must not count them as the app's, or Return would
+        never close them."""
+        app = self.app
+        if not app or not app.keep_on_home or app.closing:
+            return
+        app.not_owned |= set(self.client_list() or []) - app.baseline - app.owned
 
     def kept_windows(self):
         """Windows Return never closes: a keep_on_home app's own."""
@@ -993,6 +1041,10 @@ class Daemon:
             app.known.add(wid)
             if is_app_window(props):
                 log.info("%s showed window %s", app.id, wid)
+                if app.keep_on_home and wid not in app.not_owned:
+                    # Its own, which Return leaves open, even when it maps
+                    # after the viewer has gone to the desktop.
+                    app.owned.add(wid)
                 app.window_deadline = None
                 # Left behind the black launcher a moment longer while it
                 # goes full screen, so the desktop never flashes (D77).
@@ -1027,7 +1079,18 @@ class Daemon:
         keep_on_home is ended the way Home ends it, so none runs unseen
         behind the launcher (Law 4); a keep_on_home app runs on behind it."""
         app = self.app
-        if not app or app.closing:
+        if not app:
+            return
+        if app.closing:
+            if self.pending:
+                # A launch is still waiting for this app to end. Started now,
+                # it would run unseen behind the launcher, so drop it, and say
+                # it has ended so the launcher stops waiting for it. The old
+                # app's own exit then goes out as a plain app_exited.
+                app_id = self.pending[0]
+                self.pending = None
+                log.info("launcher shown before %s could start: not starting it", app_id)
+                self.send({"evt": "app_exited", "id": app_id, "code": 0})
             return
         app.activate_until = None
         if app.reveal_at is not None:
@@ -1095,11 +1158,17 @@ class Daemon:
             self._spawn(*pending)
             return
         self.send({"evt": "app_exited", "id": app.id, "code": code})
+        if self.returning:
+            # Return is closing the desktop's windows, maybe waiting on a save
+            # prompt. It shows Home or Still open itself once it is done.
+            return
         if app.show_after:
-            if self.desktop:
-                self.return_from_desktop()  # Home on the desktop, now the app has gone
-            else:
+            if not self.desktop:
                 self.show()
+            elif app.return_after:
+                self.return_from_desktop()  # Home on the desktop, now the app has gone
+            # Otherwise the launch timed out while the viewer was on the
+            # desktop. Nobody pressed Home, so they stay there.
         elif not self.visible and not self.desktop:
             # The app closed itself; the launcher is behind it. On the
             # desktop it is minimised, and raising it would pull the viewer
@@ -1118,9 +1187,18 @@ class Daemon:
             return
         if dry_run():
             log.info("dry run: would run %s", " ".join(argv))
+            # The launcher shows "Shutting down" until the box goes down.
+            # Nothing will, so take it back to Home.
+            self.send({"evt": "show"})
             return
         log.info("running %s", " ".join(argv))
-        self.run_cmd(argv)
+        code = self.run_wait(argv)
+        if code != 0:
+            # Refused (an inhibitor, polkit) or missing: the launcher says so
+            # rather than showing "Shutting down" for ever.
+            log.warning("%s failed: %s", " ".join(argv),
+                        "could not start" if code is None else "exit status %d" % code)
+            self.send({"evt": "power_failed", "action": action})
 
     # evdev --------------------------------------------------------------------
 

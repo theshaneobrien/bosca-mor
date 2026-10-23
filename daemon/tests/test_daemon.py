@@ -11,6 +11,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest import mock
 
 os.environ["BOSCAMOR_DRY_RUN"] = "1"  # always, before anything can act
 
@@ -38,6 +39,8 @@ class Recorder(bi.Daemon):
         super().__init__(**kw)
         self.sent = []
         self.ran = []
+        self.waited = []
+        self.wait_code = 0
         self.signals = []
         self.clock = None
 
@@ -50,6 +53,11 @@ class Recorder(bi.Daemon):
 
     def run_cmd(self, argv):
         self.ran.append(argv)
+
+    def run_wait(self, argv):
+        """Never runs anything: power commands are recorded, and answer wait_code."""
+        self.waited.append(argv)
+        return self.wait_code
 
     def run_capture(self, argv):
         return ""  # no X server in tests; FakeX in test_return answers from fixtures
@@ -183,13 +191,49 @@ class TestPower(DaemonCase):
             self.d.handle({"cmd": "power", "action": "poweroff"})
             self.d.handle({"cmd": "power", "action": "reboot"})
         self.assertEqual(self.d.ran, [])
+        self.assertEqual(self.d.waited, [])
         self.assertIn("dry run: would run systemctl poweroff", "\n".join(logs.output))
         self.assertIn("dry run: would run systemctl reboot", "\n".join(logs.output))
+        # Nothing goes down, so the launcher leaves "Shutting down" for Home.
+        self.assertEqual(self.d.events("show"), [{"evt": "show"}] * 2)
+        self.assertEqual(self.d.events("power_failed"), [])
 
     def test_unknown_power_action_does_nothing(self):
         self.d.handle({"cmd": "power", "action": "halt"})
         self.d.handle({"cmd": "power"})
         self.assertEqual(self.d.ran, [])
+        self.assertEqual(self.d.waited, [])
+        self.assertEqual(self.d.sent, [])
+
+    def real_run(self):
+        """Power as on the box. Recorder.run_wait still runs nothing."""
+        return mock.patch.object(bi, "dry_run", return_value=False)
+
+    def test_refused_power_says_so(self):
+        # Another user's inhibitor or polkit refuses it, or systemctl is missing.
+        for code in (1, None):
+            self.d.sent.clear()
+            self.d.waited.clear()
+            self.d.wait_code = code
+            with self.real_run(), self.assertLogs("boscamor-input", "WARNING"):
+                self.d.handle({"cmd": "power", "action": "reboot"})
+            self.assertEqual(self.d.waited, [["systemctl", "reboot"]])
+            self.assertEqual(self.d.sent, [{"evt": "power_failed", "action": "reboot"}])
+
+    def test_power_that_runs_sends_nothing(self):
+        with self.real_run():
+            self.d.handle({"cmd": "power", "action": "poweroff"})
+        self.assertEqual(self.d.waited, [["systemctl", "poweroff"]])
+        self.assertEqual(self.d.sent, [], "the box is going down")
+
+    def test_wait_helper(self):
+        wait = bi.Daemon.run_wait   # the real one, on harmless commands
+        self.assertEqual(wait(self.d, ["true"]), 0)
+        self.assertEqual(wait(self.d, ["false"]), 1)
+        with self.assertLogs("boscamor-input", "WARNING"):
+            self.assertIsNone(wait(self.d, ["/no/such/binary"]))
+        with mock.patch.object(bi, "POWER_WAIT_S", 0.2):
+            self.assertEqual(wait(self.d, ["sleep", "5"]), 0, "still running: the box is going down")
 
 
 class TestApps(DaemonCase):
@@ -267,6 +311,27 @@ class TestApps(DaemonCase):
         self.assertTrue(self.d.pump(lambda: self.d.app and self.d.app.id == "plex"))
         exited = self.d.events("app_exited")
         self.assertEqual([(e["id"], e.get("replaced")) for e in exited], [("music", True)])
+        self.assertEqual(len(self.d.events("show")), 1, "only the Home press showed the launcher")
+
+    def test_launcher_back_before_the_next_app_starts_drops_it(self):
+        # Spotify plays behind Home and the viewer picks Plex. Power on the
+        # loading screen while Spotify is still ending: Plex must not start
+        # behind the confirm.
+        self.d.handle({"cmd": "launch", "id": "music", "argv": ["sleep", "60"], "keep_on_home": True})
+        self.d.handle({"cmd": "state", "visible": False})
+        self.d.on_home()
+        self.d.handle({"cmd": "state", "visible": True})
+        self.d.handle({"cmd": "launch", "id": "plex", "argv": ["sleep", "60"]})
+        self.d.handle({"cmd": "state", "visible": False})   # the launch fade ended
+        self.d.handle({"cmd": "state", "visible": True})    # Power, before Spotify has gone
+        self.assertIsNone(self.d.pending)
+        self.assertEqual(self.d.events("app_exited"), [{"evt": "app_exited", "id": "plex", "code": 0}],
+                         "the launcher stops waiting for Plex")
+        self.assertTrue(self.d.pump(lambda: self.d.app is None))
+        self.d.run_once(0.05)
+        self.assertIsNone(self.d.app, "Plex never started")
+        self.assertEqual([(e["id"], e.get("replaced")) for e in self.d.events("app_exited")],
+                         [("plex", None), ("music", None)])
         self.assertEqual(len(self.d.events("show")), 1, "only the Home press showed the launcher")
 
     def test_launcher_shown_over_an_app_ends_it(self):

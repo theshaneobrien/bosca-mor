@@ -373,6 +373,49 @@ class TestDesktopWithAnApp(unittest.TestCase):
         self.assertEqual(d.acted(), ["dry run: would run wmctrl -i -c 0x2a00003"])
         self.assertIsNotNone(d.returning)
 
+    def test_kept_app_quitting_during_the_prompt_wait_raises_nothing(self):
+        d = self.d
+        self.start_kept_app()
+        d.open_windows += ["0x3a00007", "0x3a0012a"]   # Writer, asking to save
+        d.on_home()
+        self.assertIsNotNone(d.returning)
+        d.ran.clear()
+        d.app.proc.kill()                            # the kept app quits meanwhile
+        self.assertTrue(d.pump(lambda: d.app is None))
+        self.assertNotIn(["wmctrl", "-F", "-a", bi.LAUNCHER_TITLE], d.ran,
+                         "Home does not cover the save prompt")
+        self.assertIsNotNone(d.returning, "Return still waits for the answer")
+        self.assertEqual(len(d.events("show")), 1, "only the first Home")
+
+    def test_windows_from_an_earlier_visit_are_not_the_apps(self):
+        # Desktop, Firefox opened, then back to the launcher without Return
+        # (the viewer clicked it, or Power then Cancel), then Desktop again.
+        d = self.d
+        self.start_kept_app()
+        d.open_windows.append("0x2a00003")
+        d.handle({"cmd": "state", "visible": True})
+        d.handle({"cmd": "desktop", "notify": False})
+        d.on_home()
+        self.assertEqual(d.acted(), ["dry run: would run wmctrl -i -c 0x2a00003"],
+                         "Firefox closes; the kept app's own window does not")
+
+    def test_kept_app_window_that_maps_on_the_desktop_is_its_own(self):
+        # A slow keep_on_home app: Home on its loading screen, then Desktop,
+        # and its window maps after that.
+        d = self.d
+        d.handle({"cmd": "launch", "id": "music", "argv": ["sleep", "60"], "keep_on_home": True})
+        d.handle({"cmd": "state", "visible": False})
+        d.on_home()
+        d.handle({"cmd": "state", "visible": True})
+        d.handle({"cmd": "desktop", "notify": False})
+        d.open_windows.append(self.MUSIC)
+        d.clock = 1000.0 + bi.WINDOW_POLL_S
+        d.tick()
+        d.on_home()
+        self.assertEqual(d.acted(), [], "Return leaves the app's own window open")
+        self.assertEqual(d.events("show"), [{"evt": "show"}] * 2)
+        self.assertEqual(d.signals, [])
+
     def test_app_quitting_on_the_desktop_leaves_the_launcher_minimised(self):
         d = self.d
         self.start_kept_app()
