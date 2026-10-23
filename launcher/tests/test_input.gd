@@ -4,6 +4,7 @@ const HomeScene := preload("res://scenes/home.tscn")
 const Apps := preload("res://scripts/apps.gd")
 const InputModeScript := preload("res://scripts/input_mode.gd")
 const Mode := InputModeScript.Mode
+const Tokens := preload("res://theme/tokens.gd")
 
 var home: Control
 var im: Node
@@ -340,4 +341,112 @@ func test_early_dwell_timer_waits_out_the_rest() -> void:
 	im.fake_now_ms = 1220
 	home.resolve_dwell()
 	eq(home.focus, 2, "selected once the dwell is really over")
+	_teardown()
+
+
+func _finish_tweens() -> void:
+	for t in tree.get_processed_tweens():
+		if t.is_valid():
+			t.custom_step(10.0)
+
+
+# Rests the pointer on p, lets each dwell end and the row settle, with 1 px of
+# jitter in between (the G20S never holds still).
+func _rest_with_jitter(p: Vector2, t: int) -> int:
+	for i in 6:
+		t += 200
+		im.fake_now_ms = t
+		home.resolve_dwell()
+		_finish_tweens()
+		t += 10
+		_mouse_to(p + Vector2(i % 2, 0), t)
+	return t
+
+
+# Review: hovering the fifth tile slid the row, the next tile came under the
+# still pointer, and jitter walked focus to the end; a click launched that tile.
+func test_hover_never_slides_a_tile_under_the_pointer() -> void:
+	await _setup()
+	launched.clear()
+	var p := _centre(4)
+	_mouse_to(p + Vector2(-60, 0), 1000)
+	_mouse_to(p, 1050)
+	eq(im.mode, Mode.POINTER, "pointer mode")
+	_rest_with_jitter(p, 1050)
+	eq(home.focus, 4, "focus stays on the tile under the pointer")
+	eq(home._strip_x, float(Tokens.PAD_X), "the row did not move")
+	eq(home.tile_at(p), 4, "the same tile is still under the pointer")
+	_click(p)
+	eq(launched, ["prime"], "a click launches the tile pointed at")
+	_teardown()
+
+
+func test_hover_after_the_row_scrolled_keeps_it_still() -> void:
+	await _setup()
+	launched.clear()
+	for i in 6:
+		_key(KEY_RIGHT)
+		_key(KEY_RIGHT, false)
+	_finish_tweens()
+	eq(home.focus, 6, "keys moved focus")
+	var row_x: float = home._strip_x
+	var p := _centre(4)                 # second slot from the left now
+	_mouse_to(p + Vector2(60, 0), 1000)
+	_mouse_to(p, 1050)
+	eq(im.mode, Mode.POINTER, "pointer mode")
+	_rest_with_jitter(p, 1050)
+	eq(home.focus, 4, "focus stays on the tile under the pointer")
+	eq(home._strip_x, row_x, "the row did not move")
+	_click(p)
+	eq(launched, ["prime"], "a click launches the tile pointed at")
+	_teardown()
+
+
+# Review: samples from a pointer sweep outlived a D-pad press, so the first
+# jitter after it counted as a 40 px move and undid the press.
+func test_motion_before_a_press_never_counts() -> void:
+	await _setup()
+	var c := _centre(0)
+	_mouse_to(c + Vector2(-200, 0), 1000)
+	_mouse_to(c + Vector2(-100, 0), 1020)
+	_mouse_to(c + Vector2(-50, 0), 1040)
+	_mouse_to(c, 1060)
+	eq(im.mode, Mode.POINTER, "pointer first")
+	im.fake_now_ms = 1070
+	_key(KEY_RIGHT)
+	_key(KEY_RIGHT, false)
+	_mouse_to(c + Vector2(1, 0), 1090)
+	eq(im.mode, Mode.REMOTE, "1 px after the press stays remote")
+	eq(im.cursor_visible, false, "cursor stays hidden")
+	im.fake_now_ms = 1300
+	home.resolve_dwell()
+	eq(home.focus, 1, "the press is not undone")
+	_teardown()
+
+
+# Review: the pad's style was set before the old one was read, so a switch to
+# another kind of pad in controller mode never changed the hints.
+func test_pad_swap_in_controller_mode_updates_hints() -> void:
+	await _setup()
+	im._set_mode(Mode.CONTROLLER, "xbox")
+	eq(home.hint_labels(), ["A", "B"], "an Xbox pad")
+	im._set_mode(Mode.CONTROLLER, "playstation")
+	eq(home.hint_labels(), ["ps-cross", "ps-circle"], "a DualSense, still in controller mode")
+	im._set_mode(Mode.POINTER)
+	im._set_mode(Mode.CONTROLLER, "xbox")
+	eq(home.hint_labels(), ["A", "B"], "back to the Xbox pad by way of the pointer")
+	im._set_mode(Mode.REMOTE)
+	im.pad_style = "xbox"
+	_teardown()
+
+
+func test_pad_disconnect_stops_repeat() -> void:
+	await _setup()
+	_button(JOY_BUTTON_DPAD_RIGHT)
+	eq(home.focus, 1, "press")
+	Input.joy_connection_changed.emit(0, false)
+	im.tick(1.0)
+	eq(home.focus, 1, "no repeat once the pad is gone")
+	check(not im.is_processing(), "no per-frame work left running")
+	im._set_mode(Mode.REMOTE)
 	_teardown()

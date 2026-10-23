@@ -39,8 +39,10 @@ func _ready() -> void:
 	_hide_timer.one_shot = true
 	_hide_timer.timeout.connect(_on_hide_timeout)
 	add_child(_hide_timer)
-	if not Input.get_connected_joypads().is_empty():
-		_set_mode(Mode.CONTROLLER)
+	# SPEC: the mode is set by the last device used, and at start none has
+	# been. So a pad that is only plugged in (or a receiver Godot lists as a
+	# pad) waits for its first press, and the remote's hints show until then.
+	Input.joy_connection_changed.connect(_on_joy_connection_changed)
 	_apply_cursor()
 
 
@@ -84,8 +86,7 @@ func _input(ev: InputEvent) -> void:
 		_track_nav(ev)
 	elif ev is InputEventJoypadButton:
 		if ev.pressed:
-			pad_style = style_for_pad(Input.get_joy_name(ev.device))
-			_set_mode(Mode.CONTROLLER)
+			_set_mode(Mode.CONTROLLER, style_for_pad(Input.get_joy_name(ev.device)))
 		_track_nav(ev)
 	elif ev is InputEventJoypadMotion:
 		_track_stick(ev)
@@ -170,6 +171,13 @@ func _notification(what: int) -> void:
 		release_all()
 
 
+# A pad that drops out mid-hold (battery, sleep) may never send its release,
+# and the repeat would run on with nobody touching anything.
+func _on_joy_connection_changed(_device: int, connected: bool) -> void:
+	if not connected:
+		release_all()
+
+
 func _track_stick(ev: InputEventJoypadMotion) -> void:
 	var dir := ""
 	if ev.axis == JOY_AXIS_LEFT_X:
@@ -185,8 +193,7 @@ func _track_stick(ev: InputEventJoypadMotion) -> void:
 	if not was.is_empty():
 		_hold(was, false)
 	if not dir.is_empty():
-		pad_style = style_for_pad(Input.get_joy_name(ev.device))
-		_set_mode(Mode.CONTROLLER)
+		_set_mode(Mode.CONTROLLER, style_for_pad(Input.get_joy_name(ev.device)))
 		_hold(dir, true)
 		_send.call_deferred(dir)
 
@@ -228,11 +235,16 @@ func _send(action: String) -> void:
 
 # Mode -------------------------------------------------------------------------
 
-func _set_mode(m: Mode) -> void:
+## pad is the style of the pad just used, if any. It is set here, after the
+## old style is read, so a switch to another kind of pad shows new hints.
+func _set_mode(m: Mode, pad := "") -> void:
 	var old_style := hint_style()
+	if not pad.is_empty():
+		pad_style = pad
 	if m != Mode.POINTER:
 		_focus_mode = m
 		_hide_timer.stop()
+		_motion.clear()    # a press starts afresh: motion from before it never counts
 	if m != mode:
 		mode = m
 		_apply_cursor()

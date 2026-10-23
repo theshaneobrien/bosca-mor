@@ -169,3 +169,31 @@ func test_reduce_motion_fades_only() -> void:
 	_finish()
 	_check_settled(9)
 	_teardown()
+
+
+# Review: a launch that failed in its first 100 ms snapped the screen to full
+# black, then faded back.
+func test_return_mid_launch_turns_back_from_where_it_stands() -> void:
+	await _setup()
+	faded = 0
+	_press(KEY_ENTER)
+	for t in tree.get_processed_tweens():
+		t.custom_step(0.1)
+	var a: float = home._fade.color.a
+	var s: Vector2 = home._tile(0).scale
+	check(a > 0.0 and a < 0.5, "fade part way: %s" % a)
+	check(s.x > Tokens.TILE_FOCUS_SCALE, "zoom part way: %s" % s)
+	home.play_return()
+	eq(home._fade.color.a, a, "no jump to black")
+	eq(home._tile(0).scale, s, "no snap of the tile")
+	var peak: float = a
+	for i in 12:
+		for t in tree.get_processed_tweens():
+			t.custom_step(0.025)
+		peak = maxf(peak, home._fade.color.a)
+	check(peak <= a, "the fade only goes down: peak %s from %s" % [peak, a])
+	_finish()
+	eq(faded, 0, "launch_faded never fires")
+	eq(home._fade.visible, false, "fade gone")
+	_check_settled(0)
+	_teardown()
