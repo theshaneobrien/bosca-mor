@@ -94,6 +94,21 @@ put_file() {
 	rm -f "$tmp"
 }
 
+# Copies a file (binary safe) only when it differs.
+put_copy() {
+	local src="$1" dest="$2" mode="$3"
+	if [ ! -f "$src" ]; then
+		warn "$src is missing, so $dest was not written"
+		return
+	fi
+	if [ -f "$dest" ] && cmp -s "$src" "$dest"; then
+		fix_mode "$dest" "$mode"
+		return
+	fi
+	todo "write $dest"
+	run install -D -m "$mode" "$src" "$dest"
+}
+
 # Writes a file only when it is missing: the user may have changed it since.
 seed_file() {
 	local dest="$1" mode="$2" src="$3"
@@ -114,7 +129,7 @@ make_dir() {
 	fi
 }
 
-apt_installed() { dpkg-query -W -f='${Status}' "$1" 2>/dev/null | grep -q "install ok installed"; }
+apt_installed() { dpkg-query -W -f='${Status}' "$1" 2>/dev/null | grep "install ok installed" >/dev/null; }
 
 # The launcher export is one ELF file; a failed download is an error page.
 is_elf() { [ "$(head -c 4 "$1" | od -An -tx1 | tr -d ' \n')" = 7f454c46 ]; }
@@ -141,7 +156,7 @@ packages() {
 
 input_group() {
 	step "2. The input group (the daemon reads the remote)"
-	if id -nG "$USER_NAME" 2>/dev/null | tr ' ' '\n' | grep -qx input; then
+	if id -nG "$USER_NAME" 2>/dev/null | tr ' ' '\n' | grep -x input >/dev/null; then
 		ok "$USER_NAME is in input"
 	else
 		todo "add $USER_NAME to input (takes effect at the next login)"
@@ -168,7 +183,7 @@ MEDIA_SCHEMAS=(org.cinnamon.desktop.keybindings.media-keys org.cinnamon.desktop.
 
 cinnamon() {
 	step "4. Cinnamon's power button action"
-	if ! have gsettings || ! gsettings list-keys "$POWER_SCHEMA" 2>/dev/null | grep -qx button-power; then
+	if ! have gsettings || ! gsettings list-keys "$POWER_SCHEMA" 2>/dev/null | grep -x button-power >/dev/null; then
 		warn "no $POWER_SCHEMA button-power here; find the key with: gsettings list-recursively | grep -i power"
 	else
 		local cur
@@ -180,7 +195,7 @@ cinnamon() {
 	fi
 
 	step "4. Cinnamon's minimise animation (Desktop hides the launcher at once, D71)"
-	if ! have gsettings || ! gsettings list-keys org.cinnamon 2>/dev/null | grep -qx desktop-effects-minimize; then
+	if ! have gsettings || ! gsettings list-keys org.cinnamon 2>/dev/null | grep -x desktop-effects-minimize >/dev/null; then
 		warn "no org.cinnamon desktop-effects-minimize here; turn the minimise effect off in Effects by hand"
 	else
 		local effect
@@ -247,7 +262,7 @@ lightdm() {
 		"$(sed "s/@USER@/$USER_NAME/" "$FILES/lightdm-boscamor.conf")" root
 	lightdm_overrides
 	if have getent && getent group autologin >/dev/null; then
-		if id -nG "$USER_NAME" | tr ' ' '\n' | grep -qx autologin; then ok "$USER_NAME is in autologin"; else
+		if id -nG "$USER_NAME" | tr ' ' '\n' | grep -x autologin >/dev/null; then ok "$USER_NAME is in autologin"; else
 			todo "add $USER_NAME to autologin"
 			as_root usermod -aG autologin "$USER_NAME"
 		fi
@@ -335,7 +350,12 @@ files() {
 		fi
 	fi
 
-	step "7. Launcher in the menu"
+	step "7. Launcher in the menu, with its icon"
+	local px icons="$HOME_DIR/.local/share/icons/hicolor"
+	for px in 16 24 32 48 64 128 256; do
+		put_copy "$ROOT/launcher/assets/icon/launcher-$px.png" "$icons/${px}x${px}/apps/boscamor-launcher.png" 0644
+	done
+	put_copy "$ROOT/launcher/assets/icon/launcher.svg" "$icons/scalable/apps/boscamor-launcher.svg" 0644
 	put_file "$HOME_DIR/.local/share/applications/boscamor-launcher.desktop" 0644 "$(cat "$FILES/boscamor-launcher.desktop")"
 
 	step "7. Return shortcut, in the menu and on the desktop"
@@ -345,7 +365,7 @@ files() {
 	local on_desktop
 	on_desktop="$(desktop_dir)/boscamor-return.desktop"
 	put_file "$on_desktop" 0755 "$shortcut"
-	if have gio && [ -f "$on_desktop" ] && gio info -a metadata::trusted "$on_desktop" 2>/dev/null | grep -q "trusted: true"; then
+	if have gio && [ -f "$on_desktop" ] && gio info -a metadata::trusted "$on_desktop" 2>/dev/null | grep "trusted: true" >/dev/null; then
 		ok "desktop shortcut trusted"
 	else
 		todo "mark the desktop shortcut trusted, so it runs on a click"
@@ -395,7 +415,7 @@ flatpak_has() { have flatpak && flatpak info "$1" >/dev/null 2>&1; }
 apps() {
 	step "8. Apps"
 	if [ "$APPS" = 0 ]; then ok "skipped (--no-apps)"; return; fi
-	if have flatpak && flatpak remotes --columns=name 2>/dev/null | grep -qx flathub; then
+	if have flatpak && flatpak remotes --columns=name 2>/dev/null | grep -x flathub >/dev/null; then
 		ok "Flathub remote"
 	else
 		todo "add the Flathub remote"

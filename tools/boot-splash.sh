@@ -58,7 +58,7 @@ query() {
 	update-alternatives --query default.plymouth 2>/dev/null | sed -n "s/^$1: //p"
 }
 current_theme() { query Value; }
-is_theme() { update-alternatives --list default.plymouth 2>/dev/null | grep -qxF "$1"; }
+is_theme() { update-alternatives --list default.plymouth 2>/dev/null | grep -xF "$1" >/dev/null; }
 
 rebuild() {
 	if [ "$CHANGED" = 0 ]; then

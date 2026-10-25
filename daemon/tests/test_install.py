@@ -154,6 +154,8 @@ class Scratch(unittest.TestCase):
         shutil.copytree(os.path.join(REPO, "tools"), os.path.join(self.repo, "tools"))
         os.makedirs(os.path.join(self.repo, "daemon"))
         shutil.copy(os.path.join(REPO, "daemon", "boscamor-input.py"), os.path.join(self.repo, "daemon"))
+        shutil.copytree(os.path.join(REPO, "launcher", "assets", "icon"),
+                        os.path.join(self.repo, "launcher", "assets", "icon"))
         self.sys = os.path.join(self.tmp, "sys")
         self.home = os.path.join(self.tmp, "home")
         self.stubs = os.path.join(self.tmp, "stubs")
@@ -228,6 +230,38 @@ class TestInstaller(Scratch):
         self.assertFalse(os.path.exists(self.sys_path("/etc/apt/sources.list.d/spotify.list")))
         # Apps come last, after the files.
         self.assertLess(out.index("7. Firefox kiosk profiles"), out.index("8. Apps"))
+
+    def test_the_launcher_icon_is_installed_for_the_menu_and_taskbar(self):
+        self.install()
+        icons = os.path.join(self.home, ".local/share/icons/hicolor")
+        for px in (16, 32, 48, 256):
+            got = os.path.join(icons, "%dx%d/apps/boscamor-launcher.png" % (px, px))
+            with open(got, "rb") as a, open(os.path.join(REPO, "launcher/assets/icon/launcher-%d.png" % px), "rb") as b:
+                self.assertEqual(a.read(), b.read(), got)
+        self.assertTrue(os.path.isfile(os.path.join(icons, "scalable/apps/boscamor-launcher.svg")))
+        entry = self.read(os.path.join(self.home, ".local/share/applications/boscamor-launcher.desktop"))
+        self.assertIn("Icon=boscamor-launcher\n", entry)
+        self.assertIn("StartupWMClass=Launcher\n", entry, "the taskbar matches the window to this entry")
+
+    def test_minimise_effect_is_set_when_gsettings_keeps_writing(self):
+        # Box install log, 25 Oct: under pipefail, grep -q stopped reading at
+        # the key, gsettings got SIGPIPE on its next line, and the installer
+        # said the key wasn't there.
+        self.write(os.path.join(self.stubs, "gsettings"), """#!/usr/bin/env bash
+if [ "$1" = list-keys ] && [ "$2" = org.cinnamon ]; then
+  echo desktop-effects-minimize
+  sleep 0.3
+  for i in $(seq 1 3000); do echo "other-key-$i"; done
+  exit 0
+fi
+if [ "$1" = get ] && [ "$3" = desktop-effects-minimize ]; then echo "'traditional'"; exit 0; fi
+if [ "$1" = set ]; then echo "$*" >> "$STUB_STATE/gsettings.log"; exit 0; fi
+exit 1
+""", 0o755)
+        out = self.install()
+        self.assertNotIn("no org.cinnamon desktop-effects-minimize here", out)
+        self.assertIn("set org.cinnamon desktop-effects-minimize none",
+                      self.read(os.path.join(self.state, "gsettings.log")))
 
     def test_rejected_spotify_repository_is_taken_out_again(self):
         out = self.install(fail="apt-update")

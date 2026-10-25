@@ -393,7 +393,7 @@ front() {
 	echo "in front: $(DISPLAY=$d xprop -id "$active" WM_CLASS _NET_WM_NAME 2>/dev/null | cut -d= -f2- | tr '\n' ' ')"
 	lw="$(DISPLAY=$d wmctrl -l 2>/dev/null | awk '{t=$4; for (i=5; i<=NF; i++) t=t" "$i} t=="Launcher" {print $1; exit}')"
 	if [ -z "$lw" ]; then echo "launcher window: none"; return; fi
-	if DISPLAY=$d xprop -id "$lw" _NET_WM_STATE 2>/dev/null | grep -q _NET_WM_STATE_HIDDEN; then state=minimised; else state=shown; fi
+	if DISPLAY=$d xprop -id "$lw" _NET_WM_STATE 2>/dev/null | grep _NET_WM_STATE_HIDDEN >/dev/null; then state=minimised; else state=shown; fi
 	echo "launcher window: $lw, $state"
 }
 

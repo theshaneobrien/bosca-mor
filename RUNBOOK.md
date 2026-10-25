@@ -19,6 +19,7 @@
 | Fix: first box test | done | Full screen by default; Settings from the sidebar closes it; no daemon on Linux shows a toast; launch waits black for the app window, Desktop fades first (D65 to D68); installer starts the daemon from autostart and adds a menu entry. 121 launcher tests, 59 daemon tests |
 | Fix: second box test | done | No splash; hover selects tiles; the launcher stays black behind apps and the daemon hands them the focus (D69); Return waits for save prompts (D70); minimise effect off (D71); Add app is Flatpaks and websites (D72); Remove (D73). 129 launcher tests, 65 daemon tests |
 | Loading screen | done | "Opening <name>" with the tile and pulsing dots on the black while an app starts, from 0.5 s, at up to 30 fps (D76). 132 launcher tests |
+| Taskbar icon | done | Our own icon for the window, the menu and the taskbar (D99). The installer's piped `grep -q` checks failed under pipefail when the writer kept going (SIGPIPE), which is why it said the minimise key wasn't there; all nine now read their input to the end, with a test. 223 launcher tests, 143 daemon tests. Release v0.13.1 |
 | Full review | done | Nine reviewers, three skeptics per finding: 60 of 72 findings confirmed and fixed, plus 9 smaller ones, then two rounds of reviewers on the fixes (D85 to D98). The worst: xrandr, pactl and nmcli went through a shell (Wi-Fi names could run commands), a broken apps.json plus a save wiped the app list, website tiles got an empty kiosk profile, a failed app download aborted the installer, Power over an app left it playing unseen. 223 launcher tests, 141 daemon tests. Release v0.13.0 |
 | Fix: boot picture and idle CPU | done | The boot picture is set to the exact CEA 1080p60 timing by id from `xrandr --verbose`, and every login check is logged (D83); no audio driver and a 60 Hz idle loop (D84); box-report key capture fixed (it read stdin, which was the program), plus the launcher's log, `xrandr --verbose`, kernel display messages and CPU per thread. 160 launcher tests, 70 daemon tests. Release v0.12.1 |
 | Fix: third box test | done | App windows wait 2 s more behind the black (D77); the daemon focuses the launcher at login (D78); picture set to 1080p60 with xrandr and a Picture choice with keep or undo (D79); HDMI sound and start volume with pactl (D80); Wi-Fi list and join with nmcli (D81); OK keys X can't see passed on as Accept (D82). 157 launcher tests, 70 daemon tests. Release v0.12.0 |
@@ -98,6 +99,11 @@ What the first box report confirmed: Mint 22.3, X11, Python 3.12, 1920x1080 at 6
 - [ ] If you install the boot splash: the picture shows centred on dark blue at start and at shut down. The Plymouth script couldn't be run on the dev machine, so if the screen stays plain dark blue or shows text, run `--restore` and tell the next session (D75).
 - [ ] Settings > Apps > Add app lists only Flatpaks, plus "A website"; add one website (name with a space, then its address) and open it; then remove it with Remove (D72, D73).
 
+**Fourth box report, 25 Oct 2026 (v0.13.0).** The key capture worked. G20S: Home `KEY_HOMEPAGE`, Back `KEY_BACK`, Menu `KEY_COMPOSE` (Menu in X), OK `BTN_LEFT` on the mouse interface with the air mouse on and `KEY_SELECT` on the keyboard interface with it off (D92 and D82 cover both), arrows, volume, mute, voice `KEY_VOICECOMMAND`, play/pause `KEY_PLAYPAUSE`, Power `KEY_POWER`. Idle CPU fell to 19% on Home and 8% behind an app, still far over budget: one launcher thread waits in poll about 900 times a second (14% of a core) even behind an app, in WSL too, so it looks like an engine thread (likely Godot's X11 event thread); see Deferred. The installer warned that the minimise key was missing (fixed in v0.13.1). To check with v0.13.1:
+
+- [ ] After the installer and a log out and in, the taskbar, the Alt+Tab list and the menu show the new icon (three tiles, the middle one ringed), not Godot's (D99).
+- [ ] The installer no longer warns about the minimise effect.
+
 **Full review, 23 Oct 2026 (v0.13.0).** To check on the box:
 
 - [ ] Power with the cursor resting where Power off appears, then OK with the air mouse on: Cancel runs (D92).
@@ -134,7 +140,7 @@ What the first box report confirmed: Mint 22.3, X11, Python 3.12, 1920x1080 at 6
 - [ ] Launching an app: the screen goes black and the app appears with no desktop or minimise animation in between (D65). If the minimise still shows, the box report's "Cinnamon window effects" section has what's needed to turn it off.
 - [ ] Settings from the sidebar opens straight away and one Back from the section list returns Home.
 
-- [ ] Run `evtest` on the G20S dongle and record its keycodes here (step 2). Bound now: arrows, Enter, Esc, Backspace, `KEY_BACK`, `KEY_MENU`, Home, `KEY_HOMEPAGE`. Godot has no `KEY_COMPOSE`; SPEC says X11 delivers it as Menu, so check that with F12.
+- [x] Record the G20S keycodes (step 2): done in the fourth box report, 25 Oct 2026, above.
 - [ ] Press every G20S button with the F12 overlay open and check the action shown matches SPEC "Input model" (step 2).
 - [ ] Wave the G20S around without clicking: focus must never change and the cursor must stay hidden. Then a deliberate sweep should show the cursor (step 2).
 - [ ] Check how an Xbox-style pad feels: D-pad and left stick, held-direction repeat (400 ms, then 110 ms) (step 2).
@@ -180,6 +186,8 @@ What the first box report confirmed: Mint 22.3, X11, Python 3.12, 1920x1080 at 6
 - [ ] The journal's "showed window" line names the app's own window, not a notification or the launcher; replace the synthetic fixtures `0x6000003.txt` and `0x6200001.txt` with real captures if the box report has them (spec gaps, D63).
 
 ## Deferred
+
+- [ ] Idle CPU: one launcher thread wakes about 900 times a second in poll (14% of a core on the J4105, 25 Oct report), shown or behind an app, and the same in WSL with no input devices. It is not audio (Dummy driver), accessibility, joypads or our own code. Find which engine thread it is (likely the X11 event thread) and whether a setting, a different window/display option or a later Godot release stops it; otherwise SPEC's fallback is to quit the launcher on launch and let the daemon start it again on Home.
 
 - [ ] Windows build of the launcher, after Linux v1 works on the box. Godot already exports for Windows; the work is mostly a Windows counterpart to the daemon:
     - global Home and Power keys through `RegisterHotKey` or a low-level keyboard hook (ctypes, still stdlib);

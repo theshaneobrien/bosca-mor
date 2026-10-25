@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <!-- The launcher's own icon: Home's carousel, the middle tile focused.
+       Colours are the tokens BG, CORAL, YELLOW, CYAN and TEXT. -->
+  <rect x="0" y="0" width="256" height="256" rx="56" fill="#0c0c14"/>
+  <rect x="14" y="100" width="56" height="56" rx="12" fill="#ff7a6b"/>
+  <rect x="88" y="88" width="80" height="80" rx="17" fill="#ffc94d"/>
+  <rect x="80" y="80" width="96" height="96" rx="24" fill="none" stroke="#f2f2f7" stroke-width="6"/>
+  <rect x="186" y="100" width="56" height="56" rx="12" fill="#5fdcea"/>
+</svg>
