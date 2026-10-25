@@ -56,6 +56,7 @@ godot --path launcher -s res://tools/shot.gd -- --state=home --size=1920x1080 --
 python3 -m unittest discover -s daemon/tests                  # daemon tests
 BOSCAMOR_DRY_RUN=1 python3 daemon/boscamor-input.py --fake-input   # dev daemon: type home/power/guide on stdin
 bash -n install/install.sh && install/install.sh --dry-run
+tools/build-godot-template.sh                                 # patched Linux export template, once per Godot version (Docker, D100)
 BOX=user@host tools/deploy.sh                                 # rsync build + daemon to the box
 tools/box-report.sh --all                                     # on the box: collect what dev sessions need (.tar.gz)
 ```
@@ -78,5 +79,6 @@ Development happens on Windows, and the Wyse is only a test target.
 Add one line here only when something cost real time. Keep this file under 120 lines.
 
 - Fresh clone: run `godot --headless --path launcher --import` once before tests or shots, or fonts won't load. New fonts need `multichannel_signed_distance_field=true` in their `.import`, then import again.
+- Exports use our patched template in `build/templates/` (D100). On a fresh clone run `tools/build-godot-template.sh` (Docker running) before exporting, or the export fails.
 - Never use a variable font with MSDF: overlapping contours render with artifacts (D15).
 - The dev machine is Windows; the daemon and its tests need Linux. Run them in WSL: `wsl.exe -d Ubuntu -- bash -lc 'cd /mnt/c/Users/shane/dev/bosca-mor && BOSCAMOR_GODOT=/mnt/c/Users/shane/Desktop/Godot_v4.7.2-stable_win64_console.exe python3 -m unittest discover -s daemon/tests'`. The Windows Godot reaches the WSL daemon over localhost.

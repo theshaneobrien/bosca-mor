@@ -1,0 +1,21 @@
+The X11 event thread waited 1 ms at a time on the display connection, so it
+woke about 1000 times a second even with nothing happening: 14% of a core on
+the J4105 (D100). New events still wake it at once; the timeout only bounds
+events the main thread's own Xlib calls left in the queue, now to one frame.
+
+diff --git a/platform/linuxbsd/x11/display_server_x11.cpp b/platform/linuxbsd/x11/display_server_x11.cpp
+index 65c9a3e..decb787 100644
+--- a/platform/linuxbsd/x11/display_server_x11.cpp
++++ b/platform/linuxbsd/x11/display_server_x11.cpp
+@@ -4691,8 +4691,9 @@ bool DisplayServerX11::_wait_for_events(int timeout_seconds, int timeout_microse
+ 
+ void DisplayServerX11::_poll_events() {
+ 	while (!events_thread_done.is_set()) {
+-		// Wait with a shorter timeout from the events thread to avoid delayed inputs.
+-		_wait_for_events(0, 1000);
++		// Bosca Mor patch: one frame at 60 Hz, not 1 ms. A new event wakes this
++		// at once; the timeout only bounds events already read into Xlib's queue.
++		_wait_for_events(0, 16000);
+ 
+ 		// Process events from the queue.
+ 		{

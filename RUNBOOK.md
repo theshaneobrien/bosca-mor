@@ -19,6 +19,7 @@
 | Fix: first box test | done | Full screen by default; Settings from the sidebar closes it; no daemon on Linux shows a toast; launch waits black for the app window, Desktop fades first (D65 to D68); installer starts the daemon from autostart and adds a menu entry. 121 launcher tests, 59 daemon tests |
 | Fix: second box test | done | No splash; hover selects tiles; the launcher stays black behind apps and the daemon hands them the focus (D69); Return waits for save prompts (D70); minimise effect off (D71); Add app is Flatpaks and websites (D72); Remove (D73). 129 launcher tests, 65 daemon tests |
 | Loading screen | done | "Opening <name>" with the tile and pulsing dots on the black while an app starts, from 0.5 s, at up to 30 fps (D76). 132 launcher tests |
+| Idle CPU: patched Godot template | done | Godot's X11 event thread polled every 1 ms (about 900 wakeups a second on the box, 14% of a core). Our export template is Godot 4.7.2 with that wait raised to 16 ms, built in Docker by `tools/build-godot-template.sh` (D100). In WSL the thread's wakeups fell from about 1200 to 325 a second. Release v0.13.2 |
 | Taskbar icon | done | Our own icon for the window, the menu and the taskbar (D99). The installer's piped `grep -q` checks failed under pipefail when the writer kept going (SIGPIPE), which is why it said the minimise key wasn't there; all nine now read their input to the end, with a test. 223 launcher tests, 143 daemon tests. Release v0.13.1 |
 | Full review | done | Nine reviewers, three skeptics per finding: 60 of 72 findings confirmed and fixed, plus 9 smaller ones, then two rounds of reviewers on the fixes (D85 to D98). The worst: xrandr, pactl and nmcli went through a shell (Wi-Fi names could run commands), a broken apps.json plus a save wiped the app list, website tiles got an empty kiosk profile, a failed app download aborted the installer, Power over an app left it playing unseen. 223 launcher tests, 141 daemon tests. Release v0.13.0 |
 | Fix: boot picture and idle CPU | done | The boot picture is set to the exact CEA 1080p60 timing by id from `xrandr --verbose`, and every login check is logged (D83); no audio driver and a 60 Hz idle loop (D84); box-report key capture fixed (it read stdin, which was the program), plus the launcher's log, `xrandr --verbose`, kernel display messages and CPU per thread. 160 launcher tests, 70 daemon tests. Release v0.12.1 |
@@ -26,9 +27,10 @@
 
 ## Rebuilding the launcher
 
-`launcher/export_presets.cfg` has one preset, "Linux" (x86_64, PCK embedded, tests/ and tools/ left out). It needs Godot 4.7.2's export templates in `%APPDATA%/Godot/export_templates/4.7.2.stable`. After any launcher change, export again, then deploy or re-run the installer:
+`launcher/export_presets.cfg` has one preset, "Linux" (x86_64, PCK embedded, tests/ and tools/ left out). It uses our patched release template, `build/templates/godot.linuxbsd.template_release.x86_64` (D100). Build it once per Godot version with Docker running (about 3 minutes on the dev machine; the source stays in the Docker volume `boscamor-godot-src`). After any launcher change, export again, then deploy or re-run the installer:
 
 ```bash
+tools/build-godot-template.sh        # once, and after moving to a new Godot version
 godot --headless --path launcher --export-release "Linux" ../build/boscamor
 BOX=user@host tools/deploy.sh
 ```
@@ -98,6 +100,11 @@ What the first box report confirmed: Mint 22.3, X11, Python 3.12, 1920x1080 at 6
 - [ ] Open a slow app (Jellyfin, Spotify, RetroArch): after the fade the loading screen shows its tile, "Opening <name>" and pulsing dots, until the app appears. Plex may open before it shows at all (D76).
 - [ ] If you install the boot splash: the picture shows centred on dark blue at start and at shut down. The Plymouth script couldn't be run on the dev machine, so if the screen stays plain dark blue or shows text, run `--restore` and tell the next session (D75).
 - [ ] Settings > Apps > Add app lists only Flatpaks, plus "A website"; add one website (name with a space, then its address) and open it; then remove it with Remove (D72, D73).
+
+**Patched template, 25 Oct 2026 (v0.13.2).** To check on the box:
+
+- [ ] `tools/box-report.sh --budgets`: the launcher's busiest thread (poll, about 900 wakeups a second before) should be well under 400 a second on Home and lower behind an app, and the launcher's CPU well under the 19% and 8% measured on 25 Oct (D100).
+- [ ] Remote, pad, mouse and keyboard feel as quick as before: no lag on held directions or clicks (D100).
 
 **Fourth box report, 25 Oct 2026 (v0.13.0).** The key capture worked. G20S: Home `KEY_HOMEPAGE`, Back `KEY_BACK`, Menu `KEY_COMPOSE` (Menu in X), OK `BTN_LEFT` on the mouse interface with the air mouse on and `KEY_SELECT` on the keyboard interface with it off (D92 and D82 cover both), arrows, volume, mute, voice `KEY_VOICECOMMAND`, play/pause `KEY_PLAYPAUSE`, Power `KEY_POWER`. Idle CPU fell to 19% on Home and 8% behind an app, still far over budget: one launcher thread waits in poll about 900 times a second (14% of a core) even behind an app, in WSL too, so it looks like an engine thread (likely Godot's X11 event thread); see Deferred. The installer warned that the minimise key was missing (fixed in v0.13.1). To check with v0.13.1:
 
@@ -187,7 +194,8 @@ What the first box report confirmed: Mint 22.3, X11, Python 3.12, 1920x1080 at 6
 
 ## Deferred
 
-- [ ] Idle CPU: one launcher thread wakes about 900 times a second in poll (14% of a core on the J4105, 25 Oct report), shown or behind an app, and the same in WSL with no input devices. It is not audio (Dummy driver), accessibility, joypads or our own code. Find which engine thread it is (likely the X11 event thread) and whether a setting, a different window/display option or a later Godot release stops it; otherwise SPEC's fallback is to quit the launcher on launch and let the daemon start it again on Home.
+- [ ] Idle CPU after D100: measure on the box with `tools/box-report.sh --budgets`. If Home idle is still well over 1%, the remaining cost is the launcher's own 60 Hz loop and its X traffic (about five event-thread wakeups a frame in WSL); options are a slower idle loop while nothing moves, or SPEC's fallback of quitting the launcher on launch and starting it again on Home.
+- [ ] Offer the X11 event-wait change to Godot upstream (a longer timeout, or a wake pipe so the thread blocks), so the patched template can go.
 
 - [ ] Windows build of the launcher, after Linux v1 works on the box. Godot already exports for Windows; the work is mostly a Windows counterpart to the daemon:
     - global Home and Power keys through `RegisterHotKey` or a low-level keyboard hook (ctypes, still stdlib);
