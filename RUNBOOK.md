@@ -42,7 +42,7 @@ BOX=user@host tools/deploy.sh
 **Linux dev container** (Debian trixie, as user 1000, no root, no Docker inside):
 
 - Apt packages in the image, besides git, curl, Python 3 with venv and build-essential: `pkgconf` (the template build stops without it), `libfontconfig1` (silences a harmless Godot error), `gh` (releases), `rsync` and `openssh-client` (deploy.sh, optional). For shots, also `xvfb`, `xauth` and `libgl1-mesa-dri`.
-- `tools/linux-dev-setup.sh`, then `export PATH="$PWD/build/bin:$PATH"`: the Godot 4.7.2 editor and SCons, in `build/`.
+- `tools/linux-dev-setup.sh`: the Godot 4.7.2 editor and SCons, in `build/`, linked from `build/bin`. Put that on PATH in the Dockerfile, `ENV PATH="/workspace/bosca-mor/build/bin:$PATH"`, since an `export` lasts only for its own shell.
 - `godot --headless --path launcher --import` once per clone, then `tools/build-godot-template.sh` once (about one job per 1.5 GB of memory: 5 jobs in 8 GB; it took 85 minutes on the server, so run it in tmux). Keep `build/godot-src/`: a rebuild after a patch change only recompiles what changed.
 - `gh auth login` (or `GH_TOKEN`) with push and release rights on theshaneobrien/bosca-mor, and a git remote it can push to.
 - Box reports reach the dev session however Chief copies them (on the Windows PC, from a share on the home network).
