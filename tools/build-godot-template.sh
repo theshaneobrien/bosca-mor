@@ -66,4 +66,16 @@ else
 	(cd "$SRC" && scons $FLAGS -j"$JOBS")
 	cp "$SRC/bin/$NAME" "$OUT/$NAME"
 fi
-echo "built $OUT/$NAME"
+
+# The box runs Mint 22 (Ubuntu 24.04 base, glibc 2.39). A template linked
+# against a newer glibc will not start there, so set it aside where the
+# export can't find it.
+BOX_GLIBC="2.39"
+need="$(LC_ALL=C grep -a -o -E 'GLIBC_2\.[0-9]+' "$OUT/$NAME" | sed 's/^GLIBC_//' | sort -uV | tail -1 || true)"
+if [ -n "$need" ] && [ "$(printf '%s\n%s\n' "$need" "$BOX_GLIBC" | sort -V | tail -1)" != "$BOX_GLIBC" ]; then
+	mv "$OUT/$NAME" "$OUT/$NAME.too-new"
+	echo "This template needs glibc $need, newer than the box's $BOX_GLIBC: moved to $OUT/$NAME.too-new." >&2
+	echo "Build it on Ubuntu 24.04 or older (the Docker route does), or copy one built there." >&2
+	exit 1
+fi
+echo "built $OUT/$NAME (needs glibc $need; the box has $BOX_GLIBC)"

@@ -19,6 +19,7 @@
 | Fix: first box test | done | Full screen by default; Settings from the sidebar closes it; no daemon on Linux shows a toast; launch waits black for the app window, Desktop fades first (D65 to D68); installer starts the daemon from autostart and adds a menu entry. 121 launcher tests, 59 daemon tests |
 | Fix: second box test | done | No splash; hover selects tiles; the launcher stays black behind apps and the daemon hands them the focus (D69); Return waits for save prompts (D70); minimise effect off (D71); Add app is Flatpaks and websites (D72); Remove (D73). 129 launcher tests, 65 daemon tests |
 | Loading screen | done | "Opening <name>" with the tile and pulsing dots on the black while an app starts, from 0.5 s, at up to 30 fps (D76). 132 launcher tests |
+| Template glibc guard | done | The template built on the dev container (Debian trixie, glibc 2.41) was checked: it needs glibc 2.38 at most, and the box has 2.39, so it runs there. `tools/build-godot-template.sh` now sets aside any template that needs more than 2.39 |
 | Handoff to a Linux dev container | done | Rehearsed in a Debian trixie container like the new one (user 1000, 8 GB, no capabilities, no Docker): `tools/linux-dev-setup.sh` fetches Godot 4.7.2 (SHA-512 checked) and SCons without root; all 223 launcher tests (with the Linux-only no-shell test) and 143 daemon tests pass natively; the template builds natively with `pkgconf` added. Five launcher tests had relied on the Windows-only daemon stand-in and now turn it on. CLAUDE.md, SPEC's IPC table and this file updated |
 | Idle CPU: patched Godot template | done | Godot's X11 event thread polled every 1 ms (about 900 wakeups a second on the box, 14% of a core). Our export template is Godot 4.7.2 with that wait raised to 16 ms, built in Docker by `tools/build-godot-template.sh` (D100). In WSL the thread's wakeups fell from about 1200 to 325 a second. Release v0.13.2 |
 | Taskbar icon | done | Our own icon for the window, the menu and the taskbar (D99). The installer's piped `grep -q` checks failed under pipefail when the writer kept going (SIGPIPE), which is why it said the minimise key wasn't there; all nine now read their input to the end, with a test. 223 launcher tests, 143 daemon tests. Release v0.13.1 |
@@ -28,7 +29,7 @@
 
 ## Rebuilding the launcher
 
-`launcher/export_presets.cfg` has one preset, "Linux" (x86_64, PCK embedded, tests/ and tools/ left out). It uses our patched release template, `build/templates/godot.linuxbsd.template_release.x86_64` (D100), which is not committed. Build it once per clone and per Godot version: with Docker running it builds in a container (about 3 minutes on Chief's PC; the source stays in the Docker volume `boscamor-godot-src`); without Docker it builds in place under `build/godot-src/` (`NATIVE=1` forces that; `JOBS` sets the parallel jobs). After any launcher change, export again, then release (below), deploy, or re-run the installer:
+`launcher/export_presets.cfg` has one preset, "Linux" (x86_64, PCK embedded, tests/ and tools/ left out). It uses our patched release template, `build/templates/godot.linuxbsd.template_release.x86_64` (D100), which is not committed. Build it once per clone and per Godot version: with Docker running it builds in a container (about 3 minutes on Chief's PC; the source stays in the Docker volume `boscamor-godot-src`); without Docker it builds in place under `build/godot-src/` (`NATIVE=1` forces that; `JOBS` sets the parallel jobs). Either way the script refuses a template that needs a newer glibc than the box's 2.39 (Mint 22): one built on Debian trixie needs 2.38, like the Ubuntu 24.04 one. After any launcher change, export again, then release (below), deploy, or re-run the installer:
 
 ```bash
 tools/build-godot-template.sh        # once, and after moving to a new Godot version
@@ -42,7 +43,7 @@ BOX=user@host tools/deploy.sh
 
 - Apt packages in the image, besides git, curl, Python 3 with venv and build-essential: `pkgconf` (the template build stops without it), `libfontconfig1` (silences a harmless Godot error), `gh` (releases), `rsync` and `openssh-client` (deploy.sh, optional). For shots, also `xvfb`, `xauth` and `libgl1-mesa-dri`.
 - `tools/linux-dev-setup.sh`, then `export PATH="$PWD/build/bin:$PATH"`: the Godot 4.7.2 editor and SCons, in `build/`.
-- `godot --headless --path launcher --import` once per clone, then `tools/build-godot-template.sh` once (about one job per 1.5 GB of memory: 5 jobs in 8 GB).
+- `godot --headless --path launcher --import` once per clone, then `tools/build-godot-template.sh` once (about one job per 1.5 GB of memory: 5 jobs in 8 GB; it took 85 minutes on the server, so run it in tmux). Keep `build/godot-src/`: a rebuild after a patch change only recompiles what changed.
 - `gh auth login` (or `GH_TOKEN`) with push and release rights on theshaneobrien/bosca-mor, and a git remote it can push to.
 - Box reports reach the dev session however Chief copies them (on the Windows PC, from a share on the home network).
 
