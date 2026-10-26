@@ -54,6 +54,7 @@ func _setup() -> void:
 	tree.root.add_child(main)
 	main.animate = false
 	main.daemon.stub_delay = -1.0
+	main.daemon.stand_in = true     # the no-daemon stand-in on every OS (D66 keeps it off Linux)
 	var im = tree.root.get_node_or_null("InputMode")
 	if im:
 		im._set_mode(InputModeScript.Mode.REMOTE)

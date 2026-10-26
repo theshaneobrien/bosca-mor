@@ -1,5 +1,7 @@
 # Session prompts
 
+**History.** All ten steps below are done (RUNBOOK.md, status table). Later work came from box tests and a full review; it is in the RUNBOOK status rows and DECISIONS D59 onwards. New sessions start from CLAUDE.md and RUNBOOK.md, not from a step here.
+
 Start every session fresh (`/clear` or a new session). Context carries over through RUNBOOK.md and DECISIONS.md, not chat history. The prompt you type is just:
 
 > Read CLAUDE.md, then do step N from docs/PROMPTS.md.

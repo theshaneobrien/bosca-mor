@@ -61,6 +61,7 @@ func _start_main() -> void:
 	tree.root.add_child(main)
 	main.animate = false
 	main.daemon.stub_delay = -1.0
+	main.daemon.stand_in = true     # the no-daemon stand-in on every OS (D66 keeps it off Linux)
 	st = main.settings
 	st.desktop_dirs = ["res://tests/fixtures/desktop"]
 	st.autostart_path = dir.path_join("autostart.desktop")

@@ -294,6 +294,21 @@ These are targets. Check them with `pidstat -p <pid> 5` for CPU and `intel_gpu_t
 | Daemon to launcher | `{"evt":"app_exited","id":"plex","code":0}` | The app's process ended |
 | Daemon to launcher | `{"evt":"launch_failed","id":"plex","error":"…"}` | The spawn failed |
 
+**As built** (each addition is in DECISIONS.md):
+
+| Direction | Message | Meaning |
+| --- | --- | --- |
+| Launcher to daemon | `{"cmd":"launch",...,"keep_on_home":true}` | Home leaves this app running |
+| Launcher to daemon | `{"cmd":"desktop","notify":false}` | Back to desktop from Still open: no notification (D45) |
+| Daemon to launcher | `{"evt":"app_window","id":"plex"}` | The app's first window is up and raised (D63, D77, D85) |
+| Daemon to launcher | `{"evt":"launch_timeout","id":"plex"}` | No window within 15 s; the daemon ends the app (D63) |
+| Daemon to launcher | `{"evt":"app_exited",...,"replaced":true}` | The old app ended because a new launch replaced it; keep waiting (D86) |
+| Daemon to launcher | `{"evt":"memory_warning","id":"plex","available_mb":400}` | Memory stayed low (SPEC Memory watch) |
+| Daemon to launcher | `{"evt":"accept"}` | OK on the remote with the air mouse off (`KEY_SELECT`), which X has no key for (D82) |
+| Daemon to launcher | `{"evt":"power_failed","action":"poweroff"}` | systemctl refused; after a dry run the daemon sends `show` instead (D89) |
+
+The window raise uses `wmctrl -F -a Launcher` (the window title), and the daemon keeps activating the launcher until it has the focus (D69, D78).
+
 **Raising the window.** On `show`, the launcher restores and focuses its own window. Cinnamon's focus-stealing prevention may refuse that. If so, the daemon falls back to `wmctrl -a boscamor` (apt package `wmctrl`, the one non-stdlib dependency).
 
 ## App config and launching

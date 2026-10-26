@@ -76,6 +76,7 @@ func _shoot() -> void:
 	vp.add_child(main)
 	main.animate = false
 	main.daemon.stub_delay = -1.0
+	main.daemon.stand_in = true     # the no-daemon stand-in on every OS (D66 keeps it off Linux)
 	# Off outside an exported build, so Main started no real check that this
 	# one would wait behind.
 	main.setup.enabled = true

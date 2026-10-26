@@ -19,6 +19,7 @@
 | Fix: first box test | done | Full screen by default; Settings from the sidebar closes it; no daemon on Linux shows a toast; launch waits black for the app window, Desktop fades first (D65 to D68); installer starts the daemon from autostart and adds a menu entry. 121 launcher tests, 59 daemon tests |
 | Fix: second box test | done | No splash; hover selects tiles; the launcher stays black behind apps and the daemon hands them the focus (D69); Return waits for save prompts (D70); minimise effect off (D71); Add app is Flatpaks and websites (D72); Remove (D73). 129 launcher tests, 65 daemon tests |
 | Loading screen | done | "Opening <name>" with the tile and pulsing dots on the black while an app starts, from 0.5 s, at up to 30 fps (D76). 132 launcher tests |
+| Handoff to a Linux dev container | done | Rehearsed in a Debian trixie container like the new one (user 1000, 8 GB, no capabilities, no Docker): `tools/linux-dev-setup.sh` fetches Godot 4.7.2 (SHA-512 checked) and SCons without root; all 223 launcher tests (with the Linux-only no-shell test) and 143 daemon tests pass natively; the template builds natively with `pkgconf` added. Five launcher tests had relied on the Windows-only daemon stand-in and now turn it on. CLAUDE.md, SPEC's IPC table and this file updated |
 | Idle CPU: patched Godot template | done | Godot's X11 event thread polled every 1 ms (about 900 wakeups a second on the box, 14% of a core). Our export template is Godot 4.7.2 with that wait raised to 16 ms, built in Docker by `tools/build-godot-template.sh` (D100). In WSL the thread's wakeups fell from about 1200 to 325 a second. Release v0.13.2 |
 | Taskbar icon | done | Our own icon for the window, the menu and the taskbar (D99). The installer's piped `grep -q` checks failed under pipefail when the writer kept going (SIGPIPE), which is why it said the minimise key wasn't there; all nine now read their input to the end, with a test. 223 launcher tests, 143 daemon tests. Release v0.13.1 |
 | Full review | done | Nine reviewers, three skeptics per finding: 60 of 72 findings confirmed and fixed, plus 9 smaller ones, then two rounds of reviewers on the fixes (D85 to D98). The worst: xrandr, pactl and nmcli went through a shell (Wi-Fi names could run commands), a broken apps.json plus a save wiped the app list, website tiles got an empty kiosk profile, a failed app download aborted the installer, Power over an app left it playing unseen. 223 launcher tests, 141 daemon tests. Release v0.13.0 |
@@ -27,7 +28,7 @@
 
 ## Rebuilding the launcher
 
-`launcher/export_presets.cfg` has one preset, "Linux" (x86_64, PCK embedded, tests/ and tools/ left out). It uses our patched release template, `build/templates/godot.linuxbsd.template_release.x86_64` (D100). Build it once per Godot version with Docker running (about 3 minutes on the dev machine; the source stays in the Docker volume `boscamor-godot-src`). After any launcher change, export again, then deploy or re-run the installer:
+`launcher/export_presets.cfg` has one preset, "Linux" (x86_64, PCK embedded, tests/ and tools/ left out). It uses our patched release template, `build/templates/godot.linuxbsd.template_release.x86_64` (D100), which is not committed. Build it once per clone and per Godot version: with Docker running it builds in a container (about 3 minutes on Chief's PC; the source stays in the Docker volume `boscamor-godot-src`); without Docker it builds in place under `build/godot-src/` (`NATIVE=1` forces that; `JOBS` sets the parallel jobs). After any launcher change, export again, then release (below), deploy, or re-run the installer:
 
 ```bash
 tools/build-godot-template.sh        # once, and after moving to a new Godot version
@@ -35,16 +36,35 @@ godot --headless --path launcher --export-release "Linux" ../build/boscamor
 BOX=user@host tools/deploy.sh
 ```
 
-## Dev setup (Windows, once)
+## Dev setup
 
-- [ ] Godot 4 stable, console build, on PATH as `godot`
-- [x] Godot Linux export templates installed, matching that version (4.7.2)
-- [ ] WSL2 with Ubuntu: `sudo apt install python3 rsync openssh-client shellcheck x11-utils wmctrl`
+**Linux dev container** (Debian trixie, as user 1000, no root, no Docker inside):
+
+- Apt packages in the image, besides git, curl, Python 3 with venv and build-essential: `pkgconf` (the template build stops without it), `libfontconfig1` (silences a harmless Godot error), `gh` (releases), `rsync` and `openssh-client` (deploy.sh, optional). For shots, also `xvfb`, `xauth` and `libgl1-mesa-dri`.
+- `tools/linux-dev-setup.sh`, then `export PATH="$PWD/build/bin:$PATH"`: the Godot 4.7.2 editor and SCons, in `build/`.
+- `godot --headless --path launcher --import` once per clone, then `tools/build-godot-template.sh` once (about one job per 1.5 GB of memory: 5 jobs in 8 GB).
+- `gh auth login` (or `GH_TOKEN`) with push and release rights on theshaneobrien/bosca-mor, and a git remote it can push to.
+- Box reports reach the dev session however Chief copies them (on the Windows PC, from a share on the home network).
+
+**Chief's Windows PC:**
+
+- [x] Godot 4.7.2 console build, on PATH as `godot` (`C:\Users\shane\Desktop\Godot_v4.7.2-stable_win64_console.exe`)
+- [x] Docker Desktop, for the template build
+- [x] WSL2 with Ubuntu, for the daemon and installer tests
 - [ ] SSH key from WSL2 to the Wyse, so deploys don't prompt
 
-## Box check batches
+## Box test rounds
 
-A after step 4, B after step 6, C after step 9 (see docs/PROMPTS.md).
+Chief installs the latest release on the box (above), tests it on the TV, and sends what he saw, usually with `tools/box-report.sh --all`'s `.tar.gz` (and `~/install.log` when the installer ran). Read `report.txt` (system, screen and `xrandr --verbose`, kernel display messages, input devices, Cinnamon settings, daemon log, the launcher's Godot log with its `picture:`, `sound:` and `wifi:` lines, sound cards, network), `keys.txt` (each remote and pad button: device, code, scancode) and `budgets.txt` (pidstat for the launcher and daemon, idle and behind an app, plus CPU and wakeups per launcher thread). `fixtures/` holds xprop captures of the open windows: anonymise titles and names before committing any as test fixtures (the repo is public). Box results go under Pending on box; never estimate them.
+
+## Releasing
+
+1. Bump `config/version` in `launcher/project.godot` (patch for fixes, minor for features).
+2. Both test suites pass; `bash -n` on any script you touched.
+3. Export: `godot --headless --path launcher --export-release "Linux" ../build/boscamor` (needs the template, above).
+4. Commit and push to main.
+5. Release notes in plain words, a few bullets, the build's SHA-256 and the "Update the box" commands (see an earlier release), then: `gh release create vX.Y.Z build/boscamor --title vX.Y.Z --notes-file notes.md --target main`.
+6. Check that `https://github.com/theshaneobrien/bosca-mor/releases/latest/download/boscamor` has the same SHA-256 as `build/boscamor`: that is the URL the box fetches.
 
 ## Getting it onto the box
 

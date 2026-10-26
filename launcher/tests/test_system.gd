@@ -381,6 +381,7 @@ func _start() -> void:
 	tree.root.add_child(main)
 	main.animate = false
 	main.daemon.stub_delay = -1.0
+	main.daemon.stand_in = true     # the no-daemon stand-in on every OS (D66 keeps it off Linux)
 	fake = FakeRun.new()
 	fake.set_out("xrandr --verbose", FIX + "xrandr/box_verbose.txt")
 	main.setup.enabled = true
