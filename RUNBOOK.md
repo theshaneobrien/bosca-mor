@@ -148,7 +148,7 @@ What the first box report confirmed: Mint 22.3, X11, Python 3.12, 1920x1080 at 6
 **Self-update, 30 Oct 2026 (v0.14.0).** Install v0.14.0 by hand once (its "Update the box" commands); it is the first version that updates itself. To check:
 
 - [ ] Settings > About shows Version 0.14.0 and Updates "Up to date" (or "Not checked yet" in the first 2 minutes); OK on Updates says Checking, then Up to date.
-- [ ] The next release (the next session makes one): within 6 hours, or at once with OK on Updates, it shows Downloading with a percentage, then "Version X is ready". Open an app while it downloads: the download stops and carries on after the app closes (`journalctl --user -u boscamor-input | grep -i update` says "paused").
+- [ ] The next release: v0.14.1 waits as a draft on GitHub, the same as v0.14.0 but for its version. Once the box is on v0.14.0, publish it (github.com/theshaneobrien/bosca-mor/releases, the v0.14.1 draft, Edit, Publish release). Within 6 hours, or at once with OK on Updates, it shows Downloading with a percentage, then "Version 0.14.1 is ready". Open an app while it downloads: the download stops and carries on after the app closes (`journalctl --user -u boscamor-input | grep -i update` says "paused").
 - [ ] OK on Updates: "Update to X?" with Cancel focused. Update: "Updating" for a few seconds, then Home with "Updated to X", and the remote works at once with no click. Settings > About shows the new version; `cat ~/.local/state/boscamor/update.log` ends with "changes made."
 - [ ] Leave the next one ready and don't touch anything for 10 minutes on Home: it installs by itself the same way.
 - [ ] `ls /opt/boscamor/previous/` holds the version before.
