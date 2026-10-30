@@ -107,6 +107,14 @@ case "$1" in
 		done ;;
 esac
 """,
+    # Tailscale, up and logged in; Tailscale SSH is on once "set --ssh" ran.
+    "tailscale": r"""#!/usr/bin/env bash
+case "$1" in
+	ip) echo 100.101.102.103 ;;
+	debug) printf '{\n\t"RunSSH": %s,\n\t"WantRunning": true\n}\n' "$([ -e "$STUB_STATE/tailscale-ssh" ] && echo true || echo false)" ;;
+	set) [ "$2" = --ssh ] && touch "$STUB_STATE/tailscale-ssh" ;;
+esac
+""",
     # Just enough of update-alternatives for one group, kept in a JSON file.
     "update-alternatives": r"""#!/usr/bin/env python3
 import json, os, sys
@@ -193,6 +201,50 @@ class Scratch(unittest.TestCase):
         return self.read(self.log).splitlines() if os.path.exists(self.log) else []
 
 
+class TestShareScreen(Scratch):
+    """install/files/share-screen with tailscale and x11vnc stand-ins."""
+
+    X11VNC = r"""#!/usr/bin/env bash
+printf '%s\n' "$@" > "$STUB_STATE/x11vnc-args"
+for a in "$@"; do case "$a" in rm:*) cat "${a#rm:}" > "$STUB_STATE/x11vnc-pass" ;; esac; done
+[ -e "$STUB_STATE/x11vnc-fail" ] && { echo "listen failed: address in use"; exit 1; }
+exit 0
+"""
+
+    def share(self):
+        self.write(os.path.join(self.stubs, "x11vnc"), self.X11VNC, 0o755)
+        return self.run_script("install/files/share-screen")
+
+    def test_shares_on_the_tailscale_address_with_a_new_password(self):
+        p = self.share()
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        args = self.read(os.path.join(self.state, "x11vnc-args")).split()
+        for want in (["-listen", "100.101.102.103"], ["-rfbport", "5900"], ["-timeout", "120"]):
+            i = args.index(want[0])
+            self.assertEqual(args[i:i + 2], want)
+        self.assertIn("-once", args)
+        self.assertIn("-no6", args)
+        password = self.read(os.path.join(self.state, "x11vnc-pass")).strip()
+        self.assertRegex(password, r"^[0-9a-f]{8}$")
+        self.assertIn("password:           " + password, p.stdout)
+        self.assertIn("100.101.102.103:5900", p.stdout)
+        pwfile = [a for a in args if a.startswith("rm:")][0][3:]
+        self.assertFalse(os.path.exists(pwfile), "password file left behind")
+
+    def test_an_x11vnc_error_is_shown(self):
+        open(os.path.join(self.state, "x11vnc-fail"), "w").close()
+        p = self.share()
+        self.assertEqual(p.returncode, 1)
+        self.assertIn("address in use", p.stderr)
+
+    def test_no_tailscale_address_stops_before_x11vnc(self):
+        self.write(os.path.join(self.stubs, "tailscale"), "#!/usr/bin/env bash\nexit 1\n", 0o755)
+        p = self.share()
+        self.assertEqual(p.returncode, 1)
+        self.assertIn("Tailscale has no address", p.stderr)
+        self.assertFalse(os.path.exists(os.path.join(self.state, "x11vnc-args")))
+
+
 class TestInstaller(Scratch):
     def install(self, *args, fail=""):
         p = self.run_script("install/install.sh", *args, fail=fail)
@@ -230,6 +282,22 @@ class TestInstaller(Scratch):
         self.assertFalse(os.path.exists(self.sys_path("/etc/apt/sources.list.d/spotify.list")))
         # Apps come last, after the files.
         self.assertLess(out.index("7. Firefox kiosk profiles"), out.index("8. Apps"))
+
+    def test_remote_help_turns_on_tailscale_ssh_and_installs_share_screen(self):
+        out = self.install()
+        self.assertIn("change  turn on Tailscale SSH", out)
+        self.assertIn("tailscale set --ssh", self.logged())
+        script = os.path.join(self.dest, "share-screen")
+        self.assertEqual(self.read(script), self.read(os.path.join(REPO, "install/files/share-screen")))
+        self.assertTrue(os.stat(script).st_mode & stat.S_IXUSR)
+        self.assertIn("ok      Tailscale SSH is on", self.install())
+
+    def test_tailscale_down_warns_and_changes_nothing_there(self):
+        self.write(os.path.join(self.stubs, "tailscale"), "#!/usr/bin/env bash\nexit 1\n", 0o755)
+        out = self.install()
+        self.assertIn("warning: Tailscale isn't up", out)
+        self.assertNotIn("tailscale set --ssh", self.logged())
+        self.assert_system_steps_done()
 
     def test_the_launcher_icon_is_installed_for_the_menu_and_taskbar(self):
         self.install()

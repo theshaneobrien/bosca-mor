@@ -20,7 +20,7 @@ DEST="$SYS/opt/boscamor"
 SPOTIFY_KEY_URL="https://download.spotify.com/debian/pubkey_C85668DF69375001.gpg"
 MA_RELEASES="https://api.github.com/repos/music-assistant/desktop-app/releases/latest"
 MA_ID="io.music_assistant.Companion"
-APT_PACKAGES=(wmctrl evtest flatpak x11-utils x11-xserver-utils pulseaudio-utils network-manager libnotify-bin python3 firefox sysstat intel-gpu-tools curl)
+APT_PACKAGES=(wmctrl evtest flatpak x11-utils x11-xserver-utils pulseaudio-utils network-manager libnotify-bin python3 firefox sysstat intel-gpu-tools curl x11vnc)
 
 DRY=0
 APPS=1
@@ -393,6 +393,30 @@ for app in json.load(open(sys.argv[1])):
 PY
 }
 
+# 7. Remote help over Tailscale (D102) ----------------------------------------------------
+# SSH through Tailscale's own server, so nothing listens on the house's network,
+# and share-screen to show the TV's screen to a VNC viewer only while asked.
+# Tailscale itself is installed and logged in by hand (it needs a browser).
+
+remote_help() {
+	step "7. Remote help over Tailscale (SSH and the TV's screen)"
+	put_file "$DEST/share-screen" 0755 "$(cat "$FILES/share-screen")"
+	if ! have tailscale; then
+		warn "Tailscale isn't installed, so remote help can't reach this box: install it (tailscale.com/download), log in, then run this again"
+		return
+	fi
+	if ! tailscale ip -4 >/dev/null 2>&1; then
+		warn "Tailscale isn't up (try: sudo tailscale up), so SSH over it isn't on yet; run this again after"
+		return
+	fi
+	if tailscale debug prefs 2>/dev/null | grep '"RunSSH": true' >/dev/null; then
+		ok "Tailscale SSH is on"
+	else
+		todo "turn on Tailscale SSH"
+		as_root tailscale set --ssh || warn "could not turn on Tailscale SSH"
+	fi
+}
+
 # 8. Apps --------------------------------------------------------------------------------
 # Last, and each step warns and moves on when it fails: a download or a third-party
 # repository that is down must never stop the power key, auto-login and daemon steps.
@@ -512,6 +536,7 @@ main() {
 	cinnamon
 	lightdm
 	files
+	remote_help
 	apps
 	echo
 	for w in "${WARNINGS[@]}"; do echo "warning: $w"; done

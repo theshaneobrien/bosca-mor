@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# Shares the TV's screen for remote help (D102). From your PC, over Tailscale:
+#   ssh -t tv@<box> /opt/boscamor/share-screen
+# then point a VNC viewer at the address it prints and type its password.
+# It listens only on the box's Tailscale address, for one viewer, and stops
+# when that viewer leaves, after 2 minutes with no viewer, or on Ctrl+C.
+# Nothing runs or listens the rest of the time.
+set -euo pipefail
+
+PORT=5900
+WAIT=120          # seconds to wait for a viewer
+
+ip="$(tailscale ip -4 2>/dev/null)" || ip=""
+ip="${ip%%$'\n'*}"
+if [ -z "$ip" ]; then
+	echo "Tailscale has no address on this box, so there is nothing to share on (try: tailscale status)." >&2
+	exit 1
+fi
+if ! command -v x11vnc >/dev/null 2>&1; then
+	echo "x11vnc isn't installed: run install/install.sh again." >&2
+	exit 1
+fi
+
+display="${DISPLAY:-:0}"
+auth="${XAUTHORITY:-$HOME/.Xauthority}"
+[ -f "$auth" ] || auth=guess
+
+# VNC passwords are 8 characters at most. x11vnc reads the file, then deletes it.
+pass="$(od -An -N4 -tx1 /dev/urandom | tr -d ' \n')"
+pwfile="$(mktemp)"
+log="$(mktemp)"
+trap 'rm -f "$pwfile" "$log"' EXIT
+printf '%s\n' "$pass" > "$pwfile"
+
+echo "Sharing the TV's screen."
+echo "  VNC viewer address: $ip:$PORT"
+echo "  password:           $pass"
+echo "It stops when the viewer disconnects, after $((WAIT / 60)) minutes with no viewer, or on Ctrl+C."
+
+if ! x11vnc -display "$display" -auth "$auth" -listen "$ip" -rfbport "$PORT" -no6 \
+		-once -timeout "$WAIT" -passwdfile "rm:$pwfile" -noxdamage >"$log" 2>&1; then
+	echo "x11vnc stopped with an error; its last lines:" >&2
+	tail -n 15 "$log" >&2
+	exit 1
+fi
+echo "Stopped."

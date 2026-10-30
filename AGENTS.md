@@ -44,14 +44,14 @@ daemon/
   tests/             unittest; fixtures/ holds recorded xprop and evdev samples
 install/
   install.sh         idempotent; --dry-run prints what it would do
-  files/             apps.default.json, .desktop files, user service, logind drop-in, user.js
+  files/             apps.default.json, .desktop files, user service, logind drop-in, user.js, share-screen
 tools/
   box-report.sh      on the box: everything a dev session needs, as a .tar.gz
   deploy.sh          rsync build + daemon to the box (releases are the usual route)
   boot-splash.sh     optional Plymouth splash with Chief's picture (never committed)
   build-godot-template.sh, godot-template/   the patched Godot export template (D100)
   linux-dev-setup.sh Godot editor and SCons for a Linux dev machine, no root
-docs/                SPEC.md, DECISIONS.md (D14 to D101), PROMPTS.md (history), design/ (reference screens)
+docs/                SPEC.md, DECISIONS.md (D14 to D102), PROMPTS.md (history), design/ (reference screens)
 RUNBOOK.md           status, pending on box, deferred, blocked, releasing
 ```
 
