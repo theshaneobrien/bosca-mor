@@ -7,6 +7,9 @@
 #   install/install.sh --dry-run         print what it would do; changes nothing, no sudo
 #   install/install.sh --no-apps         skip the Flathub apps, Spotify and the Music Assistant bundle
 #   install/install.sh --long-press-poweroff   also let a long press of Power turn the box off
+#   install/install.sh --update          what the launcher's own updates run (D103): no sudo and
+#                                        no apps; system changes are listed, not made, and the
+#                                        exit code is 3 when there are any (0 when none)
 #
 # It asks for your password (sudo) for the system steps.
 set -euo pipefail
@@ -25,12 +28,14 @@ APT_PACKAGES=(wmctrl evtest flatpak x11-utils x11-xserver-utils pulseaudio-utils
 DRY=0
 APPS=1
 LONG_PRESS=0
+UPDATE=0
 for arg in "$@"; do
 	case "$arg" in
 		--dry-run) DRY=1 ;;
 		--no-apps) APPS=0 ;;
 		--long-press-poweroff) LONG_PRESS=1 ;;
-		-h|--help) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+		--update) UPDATE=1; APPS=0 ;;
+		-h|--help) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
 		*) echo "unknown option: $arg (try --help)" >&2; exit 2 ;;
 	esac
 done
@@ -39,6 +44,7 @@ USER_NAME="$(id -un)"
 HOME_DIR="$HOME"
 CHANGES=0
 WARNINGS=()
+NEEDS_SUDO=0
 
 # Output and acting ---------------------------------------------------------------
 
@@ -57,7 +63,16 @@ run() {
 	fi
 }
 
-as_root() { run sudo "$@"; }
+# An update runs from the daemon with nobody to type a password: it lists
+# what needs sudo instead, for the next time someone runs this by hand.
+as_root() {
+	if [ "$UPDATE" = 1 ]; then
+		printf '          needs sudo: %s\n' "$*"
+		NEEDS_SUDO=$((NEEDS_SUDO + 1))
+		return 0
+	fi
+	run sudo "$@"
+}
 
 # A file with the right content can still have the wrong mode, for example
 # 0777 after tools/deploy.sh copied it from a Windows drive.
@@ -87,7 +102,7 @@ put_file() {
 	tmp="$(mktemp)"
 	printf '%s\n' "$text" > "$tmp"
 	if [ -n "$root" ]; then
-		sudo install -D -m "$mode" "$tmp" "$dest"
+		as_root install -D -m "$mode" "$tmp" "$dest"
 	else
 		install -D -m "$mode" "$tmp" "$dest"
 	fi
@@ -342,11 +357,17 @@ files() {
 	# autostart starts the daemon (D67).
 	put_file "$HOME_DIR/.config/autostart/boscamor-input.desktop" 0644 "$(cat "$FILES/boscamor-input.desktop")"
 	if [ "$CHANGES" != "$daemon_before" ]; then
-		echo "          restarting the daemon so the new files take effect"
-		if [ "$DRY" = 1 ]; then
-			echo "          \$ systemctl --user restart boscamor-input.service"
-		elif ! systemctl --user restart boscamor-input.service 2>/dev/null; then
-			warn "could not start boscamor-input.service now; it starts at the next login"
+		if [ "$UPDATE" = 1 ]; then
+			# The daemon runs this update, so a restart now would end this script
+			# with it; it restarts itself once this is done.
+			echo "          the daemon restarts itself after the update"
+		else
+			echo "          restarting the daemon so the new files take effect"
+			if [ "$DRY" = 1 ]; then
+				echo "          \$ systemctl --user restart boscamor-input.service"
+			elif ! systemctl --user restart boscamor-input.service 2>/dev/null; then
+				warn "could not start boscamor-input.service now; it starts at the next login"
+			fi
 		fi
 	fi
 
@@ -529,7 +550,7 @@ main() {
 		exit 1
 	fi
 	have python3 || { echo "python3 is needed (it ships with Mint)." >&2; exit 1; }
-	echo "Installing the launcher for $USER_NAME$([ "$DRY" = 1 ] && echo ' (dry run: nothing changes)')"
+	echo "Installing the launcher for $USER_NAME$([ "$DRY" = 1 ] && echo ' (dry run: nothing changes)')$([ "$UPDATE" = 1 ] && echo ' (update: no sudo, no apps)')"
 	packages
 	input_group
 	logind
@@ -540,7 +561,13 @@ main() {
 	apps
 	echo
 	for w in "${WARNINGS[@]}"; do echo "warning: $w"; done
-	if [ "$CHANGES" = 0 ]; then
+	if [ "$UPDATE" = 1 ]; then
+		echo "$((CHANGES - NEEDS_SUDO)) changes made."
+		if [ "$NEEDS_SUDO" -gt 0 ]; then
+			echo "$NEEDS_SUDO system changes need sudo: run install/install.sh on the box by hand."
+			exit 3
+		fi
+	elif [ "$CHANGES" = 0 ]; then
 		echo "No changes: everything is already in place."
 	elif [ "$DRY" = 1 ]; then
 		echo "$CHANGES changes would be made. Run without --dry-run to make them."

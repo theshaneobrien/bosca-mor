@@ -13,6 +13,7 @@ const COPY := {
 	"forceclose": {"title": "Close %d apps?", "one": "Close 1 app?", "body": "Unsaved work will be lost.", "verb": "Close anyway", "glyph": "close"},
 	"remove": {"title": "Remove %s?", "body": "It comes off Home. You can add it again from Add app.", "verb": "Remove", "glyph": "close"},
 	"picture": {"title": "Keep this picture?", "body": "It goes back to the last one in %d seconds.", "verb": "Keep", "glyph": "desktop"},
+	"update": {"title": "Update to %s?", "body": "The launcher closes for a moment, then opens again on Home.", "verb": "Update", "glyph": "restart"},
 }
 
 var is_open := false

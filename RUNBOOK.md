@@ -21,6 +21,7 @@
 | Loading screen | done | "Opening <name>" with the tile and pulsing dots on the black while an app starts, from 0.5 s, at up to 30 fps (D76). 132 launcher tests |
 | Template glibc guard | done | The template built on the dev container (Debian trixie, glibc 2.41) was checked: it needs glibc 2.38 at most, and the box has 2.39, so it runs there. `tools/build-godot-template.sh` now sets aside any template that needs more than 2.39 |
 | Handoff to a Linux dev container | done | Rehearsed in a Debian trixie container like the new one (user 1000, 8 GB, no capabilities, no Docker): `tools/linux-dev-setup.sh` fetches Godot 4.7.2 (SHA-512 checked) and SCons without root; all 223 launcher tests (with the Linux-only no-shell test) and 143 daemon tests pass natively; the template builds natively with `pkgconf` added. Five launcher tests had relied on the Windows-only daemon stand-in and now turn it on. CLAUDE.md, SPEC's IPC table and this file updated |
+| Self-update | done | The daemon checks GitHub every 6 hours, downloads a new release only while no app is open (25 MB, carried on after an app), checks its SHA-256 and self-tests the new launcher and daemon, then installs it from Settings > About > Updates or after 10 minutes with nothing pressed. It runs `install.sh --update` (no sudo), keeps the old files in `/opt/boscamor/previous/`, restarts itself and hands over to the new launcher (D103). Releases now also carry `boscamor.tar.xz` from `tools/update-bundle.sh`. The slow steps run in a child process, so the daemon stays at about its old size. The v0.14.0 export's self-test answers `self-test ok 0.14.0`. 237 launcher tests, 173 daemon and installer tests. Release v0.14.0: install it by hand once; later releases arrive by themselves |
 | Remote help over Tailscale | done | The installer turns on Tailscale SSH and installs x11vnc and `/opt/boscamor/share-screen`, which shows the TV's screen to one VNC viewer on the box's Tailscale address with a new password each time (D102). The box already reaches the Plex server over Tailscale (`tailscale ping` direct, Plex's `/identity` answers). 227 launcher tests, 148 daemon and installer tests. No new launcher build: `git pull`, then the installer |
 | Fix: picture sync | done | The box's TV lists 1080p60 twice with the same timing: 0x5b with -HSync -VSync (no picture) and 0x5c with +HSync +VSync (the CEA one). Every login came up on 0x5c and the launcher moved it to 0x5b. The Picture choice now matches the sync too, leaves a mode with the chosen timing alone, and on a TV without 1080p60 uses its own rate down to 50 Hz (D101). Fixtures from the box's real `xrandr --verbose`. 227 launcher tests, 143 daemon tests. Release v0.13.3 |
 | Idle CPU: patched Godot template | done | Godot's X11 event thread polled every 1 ms (about 900 wakeups a second on the box, 14% of a core). Our export template is Godot 4.7.2 with that wait raised to 16 ms, built in Docker by `tools/build-godot-template.sh` (D100). In WSL the thread's wakeups fell from about 1200 to 325 a second. Release v0.13.2 |
@@ -66,8 +67,9 @@ Chief installs the latest release on the box (above), tests it on the TV, and se
 2. Both test suites pass; `bash -n` on any script you touched.
 3. Export: `godot --headless --path launcher --export-release "Linux" ../build/boscamor` (needs the template, above).
 4. Commit and push to main.
-5. Release notes in plain words, a few bullets, the build's SHA-256 and the "Update the box" commands (see an earlier release), then: `gh release create vX.Y.Z build/boscamor --title vX.Y.Z --notes-file notes.md --target main`.
-6. Check that `https://github.com/theshaneobrien/bosca-mor/releases/latest/download/boscamor` has the same SHA-256 as `build/boscamor`: that is the URL the box fetches.
+5. `tools/update-bundle.sh`: builds `build/boscamor.tar.xz`, the update boxes download (D103). It refuses uncommitted changes and a build whose self-test doesn't say the version in project.godot.
+6. Release notes in plain words, a few bullets, the build's SHA-256 and the "Update the box" commands (see an earlier release). If the release needs anything the installer does with sudo (a new package, a system file), say so: the box's own update can't do those. Then: `gh release create vX.Y.Z build/boscamor build/boscamor.tar.xz --title vX.Y.Z --notes-file notes.md --target main`. The tag must be the version in project.godot, or boxes refuse the update.
+7. Check that `https://github.com/theshaneobrien/bosca-mor/releases/latest/download/boscamor` has the same SHA-256 as `build/boscamor`: that is the URL a first install fetches. Boxes find the new release within 6 hours (Settings > About > Updates finds it at once).
 
 ## Getting it onto the box
 
@@ -82,7 +84,13 @@ chmod +x build/boscamor
 install/install.sh
 ```
 
-Reboot after the installer. For a later release: `git pull`, run the same `curl` (it always fetches the latest release), and run `install/install.sh` again.
+Reboot after the installer. From v0.14.0 on, the box updates itself (below). To update by hand instead (or before v0.14.0): `git pull`, run the same `curl` (it always fetches the latest release), and run `install/install.sh` again.
+
+**Updates (D103).** The daemon looks for a new release 2 minutes after login and every 6 hours, and downloads it while no app is open. Settings > About > Updates shows what it is doing; OK there checks now, or installs a ready update after a confirm. Otherwise a ready update installs once nobody has pressed anything for 10 minutes with the launcher on screen. The screen says "Updating" for a few seconds, then Home comes back with "Updated to X". Over SSH:
+
+- `cat ~/.local/state/boscamor/update.log`: the last install's output. Lines with `needs sudo:` are system changes it could not make: run `cd ~/bosca-mor && git pull && install/install.sh` for those.
+- `journalctl --user -u boscamor-input | grep -i update`: checks, downloads and self-tests.
+- To go back: `cp /opt/boscamor/previous/* /opt/boscamor/`, then reboot. The next check offers the newer release again.
 
 ## Boot splash (optional)
 
@@ -137,13 +145,22 @@ What the first box report confirmed: Mint 22.3, X11, Python 3.12, 1920x1080 at 6
 - [ ] If you install the boot splash: the picture shows centred on dark blue at start and at shut down. The Plymouth script couldn't be run on the dev machine, so if the screen stays plain dark blue or shows text, run `--restore` and tell the next session (D75).
 - [ ] Settings > Apps > Add app lists only Flatpaks, plus "A website"; add one website (name with a space, then its address) and open it; then remove it with Remove (D72, D73).
 
+**Self-update, 30 Oct 2026 (v0.14.0).** Install v0.14.0 by hand once (its "Update the box" commands); it is the first version that updates itself. To check:
+
+- [ ] Settings > About shows Version 0.14.0 and Updates "Up to date" (or "Not checked yet" in the first 2 minutes); OK on Updates says Checking, then Up to date.
+- [ ] The next release (the next session makes one): within 6 hours, or at once with OK on Updates, it shows Downloading with a percentage, then "Version X is ready". Open an app while it downloads: the download stops and carries on after the app closes (`journalctl --user -u boscamor-input | grep -i update` says "paused").
+- [ ] OK on Updates: "Update to X?" with Cancel focused. Update: "Updating" for a few seconds, then Home with "Updated to X", and the remote works at once with no click. Settings > About shows the new version; `cat ~/.local/state/boscamor/update.log` ends with "changes made."
+- [ ] Leave the next one ready and don't touch anything for 10 minutes on Home: it installs by itself the same way.
+- [ ] `ls /opt/boscamor/previous/` holds the version before.
+
 **Remote help, 30 Oct 2026.** The box runs Tailscale 1.104.4, starts it at boot, and reaches the Plex server over it (direct, on the home network). No SSH server, Tailscale SSH off, no VNC before this. After `git pull` and the installer:
 
-- [ ] The installer says "turn on Tailscale SSH" once, then "Tailscale SSH is on" when run again.
-- [ ] From the PC with Tailscale running: `ssh tv@tv-wyse-5070-thin-client` opens a shell on the box (D102).
+- [x] The installer says "turn on Tailscale SSH" once, then "Tailscale SSH is on" when run again.
+- [x] From the PC with Tailscale running: `ssh tv@tv-wyse-5070-thin-client` opens a shell on the box (D102). Chief, 30 Oct: SSH works.
 - [ ] `ssh -t tv@tv-wyse-5070-thin-client /opt/boscamor/share-screen`, then a VNC viewer to the address and password it prints: the TV's screen shows, and the viewer's mouse and keys work. Closing the viewer stops it, and `pgrep x11vnc` on the box is then empty.
 - [ ] Key expiry off for the box in the Tailscale admin console.
-- [ ] Plex over Tailscale: set up the server as in "Remote help", then unplug the box's ethernet and join a phone hotspot from Settings > Network. Something plays in Plex, and the server's dashboard shows the box on a 100.x address. `tailscale ping <server>` on the box says whether the path is direct or through a relay (DERP), which caps the speed.
+- [x] Plex over Tailscale on a phone hotspot: something plays. Chief, 30 Oct: works on 5G phone data at about 1 Mbps (a remote spot; the box's future home has a better line).
+- [ ] While it plays on the hotspot, the server's dashboard shows the box on a 100.x address, not "Relay" (Plex's relay caps at about 1 Mbps). `tailscale ping <server>` on the box says whether the path is direct or through a Tailscale relay (DERP).
 
 **Fifth box report, 30 Oct 2026 (v0.13.2).** The patched template runs (`custom_build` in the launcher log). Idle CPU is down but still over budget: Home 5.4% of a core (19% before D100), behind an app 3.4% (8% before). Launcher RSS 210 MB (budget 150 MB); the daemon 0.7% at most and 20.3 MB (budget 20 MB). On Home the main thread woke 540 times a second and the X11 event thread 420. Picture was on Automatic, so these were measured at 3840x2160. `intel_gpu_top` on idle Home: mostly no render work, but one burst of 5 to 21% for about 7 s with nothing moving. With the air mouse on, Back arrives as a right click (`BTN_RIGHT`), which is mapped to Back. At every login the screen was on 0x5c and the launcher moved it to 0x5b, which shows nothing on this TV (Chief checked both by hand). Fixed in v0.13.3, to check:
 

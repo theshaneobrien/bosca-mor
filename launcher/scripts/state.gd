@@ -48,7 +48,7 @@ signal picture_kept
 
 var screen := Screen.HOME
 var sidebar_focus := 0
-var confirm_kind := "poweroff"     # or "restart", "forceclose", "remove", "picture"
+var confirm_kind := "poweroff"     # or "restart", "forceclose", "remove", "picture", "update"
 var confirm_focus := 0              # 0 Cancel, 1 the action
 var still_focus := 0                # 0 Show me, 1 Close anyway, 2 Back to desktop
 ## Why the desktop is showing: "menu" (sidebar Desktop: notify), "show_me"
@@ -180,13 +180,21 @@ func _confirm_run() -> void:
 		go(Screen.OFF)
 
 
-# Cancel or Back: the force-close confirm returns to Still open, the remove
-# and picture confirms to Settings (D73, D79), the power confirms to the sidebar.
+# Cancel or Back: the force-close confirm returns to Still open, the remove,
+# picture and update confirms to Settings (D73, D79, D103), the power
+# confirms to the sidebar.
 func _to_sidebar() -> void:
 	match confirm_kind:
 		"forceclose": go(Screen.STILL_OPEN)
-		"remove", "picture": go(Screen.SETTINGS)
+		"remove", "picture", "update": go(Screen.SETTINGS)
 		_: go(Screen.SIDEBAR)
+
+
+## "Updating" on black, as for a power action (D103): the idle launcher
+## installing a ready update, or restarting into one.
+func start_update() -> void:
+	confirm_kind = "update"
+	go(Screen.OFF)
 
 
 ## What Cancel does, without a press: the picture confirm ran out of time.

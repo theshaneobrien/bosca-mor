@@ -107,6 +107,8 @@ report() {
 	section "Autostart entries" ls -la "$REAL_HOME/.config/autostart"
 	section "Launcher files" ls -la /opt/boscamor "$REAL_HOME/.config/boscamor" "$REAL_HOME/.config/boscamor/icons" "$REAL_HOME/.local/state/boscamor"
 	section "state.json" cat "$REAL_HOME/.local/state/boscamor/state.json"
+	section "Last update (D103): update.json, then install.sh --update's output" sh -c 'cat "$1/update.json"; echo; cat "$1/update.log"' sh "$REAL_HOME/.local/state/boscamor"
+	section "Update downloads" ls -la "$REAL_HOME/.cache/boscamor/update" /opt/boscamor/previous
 
 	echo "  Jellyfin TV entries (step 10)"
 	section "Jellyfin desktop entries" sh -c 'grep -H -B2 -A3 -i tv /var/lib/flatpak/exports/share/applications/org.jellyfin.JellyfinDesktop*.desktop "$HOME"/.local/share/flatpak/exports/share/applications/org.jellyfin.JellyfinDesktop*.desktop'

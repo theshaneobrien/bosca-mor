@@ -299,6 +299,36 @@ class TestInstaller(Scratch):
         self.assertNotIn("tailscale set --ssh", self.logged())
         self.assert_system_steps_done()
 
+    def test_update_lists_system_changes_and_runs_no_sudo(self):
+        # What the daemon runs for an update (D103): nobody is there to type a password.
+        with open(os.path.join(self.state, "missing"), "w") as f:
+            f.write("x11vnc\n")
+        p = self.run_script("install/install.sh", "--update")
+        self.assertEqual(p.returncode, 3, p.stdout + p.stderr)
+        # The stand-in sudo logs its commands; systemctl logs as "systemctl ...".
+        self.assertEqual([l for l in self.logged() if not l.startswith("systemctl ")], [], "sudo ran")
+        self.assertNotIn("systemctl --user restart boscamor-input.service", self.logged())
+        self.assertIn("needs sudo: apt-get install -y x11vnc", p.stdout)
+        self.assertIn("needs sudo: install -D -m 0644", p.stdout)        # logind and lightdm
+        self.assertIn("system changes need sudo: run install/install.sh on the box by hand", p.stdout)
+        self.assertIn("ok      skipped (--no-apps)", p.stdout)
+        self.assertFalse(os.path.exists(self.sys_path("/etc/systemd/logind.conf.d/boscamor.conf")))
+        # The user's own files are written.
+        self.assertTrue(os.path.isfile(self.sys_path("/opt/boscamor/boscamor-input.py")))
+        self.assertTrue(os.path.isfile(os.path.join(self.home, ".config/autostart/boscamor-input.desktop")))
+
+    def test_update_after_an_install_restarts_nothing_itself(self):
+        self.install("--no-apps")
+        os.remove(self.log)
+        with open(os.path.join(self.repo, "daemon", "boscamor-input.py"), "a") as f:
+            f.write("# a new daemon\n")
+        p = self.run_script("install/install.sh", "--update")
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertIn("the daemon restarts itself after the update", p.stdout)
+        self.assertNotIn("needs sudo", p.stdout)
+        self.assertEqual(self.logged(), [], "no sudo, and no systemctl restart of the daemon running the update")
+        self.assertTrue(self.read(self.sys_path("/opt/boscamor/boscamor-input.py")).endswith("# a new daemon\n"))
+
     def test_the_launcher_icon_is_installed_for_the_menu_and_taskbar(self):
         self.install()
         icons = os.path.join(self.home, ".local/share/icons/hicolor")

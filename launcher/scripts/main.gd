@@ -20,8 +20,9 @@ const Apps := preload("res://scripts/apps.gd")
 const Toast := preload("res://scripts/toast.gd")
 const SystemSetup := preload("res://scripts/system_setup.gd")
 const Display := preload("res://scripts/display.gd")
+const SystemInfo := preload("res://scripts/system_info.gd")
 
-const OFF_TEXT := {"poweroff": "Shutting down", "restart": "Restarting"}
+const OFF_TEXT := {"poweroff": "Shutting down", "restart": "Restarting", "update": "Updating"}
 
 ## Passed to Home; empty reads the user's files.
 @export var apps_path := ""
@@ -72,9 +73,23 @@ var blur_captures := 0
 var _hover_held := false
 var _hover_anchored := false
 var _hover_from := Vector2.ZERO
+## Updates (D103): "Updating" gives up after UPDATE_WAIT; a ready update
+## installs after UPDATE_IDLE with nothing pressed.
+var _update_timer: Timer
+var _idle_timer: Timer
+var _restarting := false           # the new launcher has been started; waiting to be told to quit
+## How often the launcher started its new self, and was told to quit (tests:
+## headless does neither).
+var restart_requests := 0
+var quit_requests := 0
 
 
 func _ready() -> void:
+	# An update runs the new launcher headless with this, before installing it (D103).
+	if "--self-test" in OS.get_cmdline_user_args():
+		print("self-test ok %s" % SystemInfo.version())
+		get_tree().quit()
+		return
 	# Idle Home wakes 60 times a second, not 145 (D84).
 	OS.low_processor_usage_mode_sleep_usec = Tokens.SHOWN_SLEEP_USEC
 	set_anchors_preset(PRESET_FULL_RECT)
@@ -93,6 +108,16 @@ func _ready() -> void:
 		if state.confirm_kind == "picture":
 			state.cancel_confirm())
 	add_child(_picture_timer)
+	_update_timer = Timer.new()
+	_update_timer.one_shot = true
+	_update_timer.timeout.connect(func():
+		if _updating():
+			_update_failed())
+	add_child(_update_timer)
+	_idle_timer = Timer.new()
+	_idle_timer.one_shot = true
+	_idle_timer.timeout.connect(_on_idle)
+	add_child(_idle_timer)
 
 	home = HomeScene.instantiate()
 	home.apps_path = apps_path
@@ -140,6 +165,10 @@ func _ready() -> void:
 	setup.wifi_done.connect(_on_wifi_done)
 	settings.wifi_message.connect(toast.push)
 	state.picture_kept.connect(_keep_picture)
+	settings.update_requested.connect(func(): state.ask("update"))
+	settings.update_check_requested.connect(daemon.check_update)
+	daemon.update_changed.connect(_on_update)
+	daemon.quit_requested.connect(_quit)
 	home.launch_requested.connect(_launch)
 	home.launch_faded.connect(_on_launch_faded)
 	daemon.app_window.connect(_on_app_window)
@@ -246,6 +275,7 @@ func _on_remote_accept() -> void:
 # for). Like any key press it puts the launcher in remote mode, which hides
 # the cursor and stops hover moving the focus.
 func _remote_key() -> void:
+	_pressed()
 	var im := get_node_or_null("/root/InputMode")
 	if im:
 		im._set_mode(InputModeScript.Mode.REMOTE)
@@ -367,6 +397,8 @@ func _on_show_home() -> void:
 # Power from the daemon shows the launcher and opens the confirm, whatever
 # was on screen (SPEC: "Power, in any state").
 func _on_power_pressed() -> void:
+	if _updating():
+		return                           # installing: nothing to confirm until it is done
 	_remote_key()
 	_panel_running = false               # the daemon ends a panel the launcher comes back over (D85)
 	# The last frame drawn was black, so there is nothing to blur yet.
@@ -547,7 +579,7 @@ func _on_changed(to: State.Screen, from: State.Screen) -> void:
 	if from == State.Screen.CONFIRM and state.confirm_kind == "picture" and not _picture_old.is_empty():
 		_undo_picture()                  # left the confirm without Keep
 	if to == State.Screen.SETTINGS:
-		if from == State.Screen.CONFIRM and state.confirm_kind in ["remove", "picture"]:
+		if from == State.Screen.CONFIRM and state.confirm_kind in ["remove", "picture", "update"]:
 			settings.resume()        # back where it was, not reset to the top
 		else:
 			settings.open()
@@ -581,7 +613,8 @@ func _on_changed(to: State.Screen, from: State.Screen) -> void:
 					and not _blur_stale:
 				_capture_blur()       # ready for Back, which returns to the sidebar
 			sidebar.close(animate, true)
-			confirm.open(state.confirm_kind, animate, still.apps.size(), _removing.get("name", ""))
+			confirm.open(state.confirm_kind, animate, still.apps.size(),
+					str(daemon.update.get("version", "")) if state.confirm_kind == "update" else _removing.get("name", ""))
 		State.Screen.STILL_OPEN:
 			confirm.close(animate)
 			sidebar.close(false)
@@ -598,7 +631,90 @@ func _on_changed(to: State.Screen, from: State.Screen) -> void:
 			_off_text.text = OFF_TEXT[state.confirm_kind]
 			_off.visible = true
 			home.save_focus()
-			daemon.power(state.confirm_kind)
+			if state.confirm_kind != "update":
+				daemon.power(state.confirm_kind)
+			elif not _restarting:
+				_update_timer.start(Tokens.UPDATE_WAIT)
+				daemon.install_update()
+
+
+# Updates (D103) ----------------------------------------------------------------
+
+func _updating() -> bool:
+	return state.screen == State.Screen.OFF and state.confirm_kind == "update"
+
+
+func _on_update(info: Dictionary) -> void:
+	settings.update_info = info
+	settings.refresh()
+	match str(info.get("status", "")):
+		"ready":
+			if _idle_timer.is_stopped():
+				_idle_timer.start(Tokens.UPDATE_IDLE)
+		"current":
+			_idle_timer.stop()
+			if info.get("installed", false):
+				toast.push("Updated to %s" % info.get("version", ""))
+		"failed":
+			_idle_timer.stop()
+			if _updating() and not _restarting:
+				_update_failed()
+		"restart":
+			_restart(str(info.get("version", "")))
+
+
+# The daemon has installed the update and started its own new self: start the
+# new launcher, and stay on "Updating" until the daemon says it is up (quit).
+func _restart(version: String) -> void:
+	_restarting = true
+	if not _updating():
+		show_launcher()
+		state.start_update()
+	_update_timer.start(Tokens.UPDATE_WAIT)
+	restart_requests += 1
+	print("update: starting the new launcher, %s" % version)
+	if DisplayServer.get_name() == "headless":
+		return
+	if OS.create_process(OS.get_executable_path(), OS.get_cmdline_args()) <= 0:
+		push_warning("update: could not start the new launcher")
+		_update_failed()
+
+
+func _update_failed() -> void:
+	_update_timer.stop()
+	_restarting = false
+	state.show_home()
+	toast.push("Couldn't install the update")
+
+
+func _quit() -> void:
+	quit_requests += 1
+	print("update: the new launcher is up; quitting")
+	if DisplayServer.get_name() != "headless":
+		get_tree().quit()
+
+
+## Any key, button, click or move, here or from the daemon: the idle install
+## waits UPDATE_IDLE from now.
+func _pressed() -> void:
+	if not _idle_timer.is_stopped():
+		_idle_timer.start(Tokens.UPDATE_IDLE)
+
+
+func _input(_ev: InputEvent) -> void:
+	_pressed()
+
+
+# Nobody has pressed anything for UPDATE_IDLE with the launcher on screen, so
+# nobody is watching: install the ready update now.
+func _on_idle() -> void:
+	if str(daemon.update.get("status", "")) != "ready":
+		return
+	if is_hidden or home.is_launching() or not state.screen in [State.Screen.HOME, State.Screen.SIDEBAR, State.Screen.SETTINGS]:
+		_idle_timer.start(Tokens.UPDATE_IDLE)   # a dialog is up: try again later
+		return
+	print("update: nothing pressed for %d minutes; installing %s" % [int(Tokens.UPDATE_IDLE / 60.0), daemon.update.get("version", "")])
+	state.start_update()
 
 
 func _to_desktop() -> void:

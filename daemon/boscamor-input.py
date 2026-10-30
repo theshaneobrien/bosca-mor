@@ -10,10 +10,15 @@ docs/SPEC.md "Companion daemon".
   boscamor-input.py --fake-input    also read home/guide/super+home/power lines on stdin
   boscamor-input.py --return        ask the running daemon to return from the desktop
   boscamor-input.py --dev-port N    dev machine: fixed port, prints BOSCAMOR_IPC=N:<token>
+  boscamor-input.py --self-test     start and stop (an update checks the new daemon runs)
 
-BOSCAMOR_DRY_RUN=1 logs power actions instead of running them.
+It also keeps the launcher up to date from its GitHub releases (D103).
+
+BOSCAMOR_DRY_RUN=1 logs power actions instead of running them, and installs no update.
 BOSCAMOR_HOME moves every path under it (see paths()).
 BOSCAMOR_RUNTIME_DIR overrides where the port and token files go.
+BOSCAMOR_UPDATE_URL is where to look for releases instead of GitHub (tests).
+BOSCAMOR_ROOT prefixes /opt/boscamor, as it does for install.sh (tests).
 """
 
 import argparse
@@ -21,14 +26,17 @@ import errno
 import json
 import logging
 import os
+import queue
 import re
 import secrets
 import selectors
+import shutil
 import signal
 import socket
 import struct
 import subprocess
 import sys
+import threading
 import time
 
 log = logging.getLogger("boscamor-input")
@@ -103,6 +111,24 @@ POWER_COMMANDS = {
 # this, it counts as working: the box is going down.
 POWER_WAIT_S = 5.0
 
+# Updates (D103): the latest GitHub release's boscamor.tar.xz, the launcher,
+# the daemon and the installer's files, installed with install.sh --update.
+UPDATE_API = "https://api.github.com/repos/theshaneobrien/bosca-mor/releases/latest"
+UPDATE_ASSET = "boscamor.tar.xz"
+UPDATE_NEEDS = ("version", "build/boscamor", "daemon/boscamor-input.py", "install/install.sh")
+UPDATE_KEEP = ("boscamor", "boscamor-input.py", "share-screen")  # copied to previous/ first
+UPDATE_FIRST_CHECK_S = 120.0       # after the launcher's first hello: the network is up by then
+UPDATE_EVERY_S = 6 * 3600.0
+UPDATE_HTTP_TIMEOUT_S = 60.0       # per connect or read, not for the whole download
+UPDATE_CHUNK = 64 * 1024
+UPDATE_API_MAX = 1 << 20
+UPDATE_SPACE_FACTOR = 10           # free space wanted, times the download: unpacked, plus previous/
+UPDATE_TEST_TIMEOUT_S = 60.0       # each self-test
+UPDATE_INSTALL_TIMEOUT_S = 300.0
+# After an update the old launcher's window, with the same title, goes a moment
+# after the new one says hello; the focus loop (D78) checks only after this.
+HANDOVER_FOCUS_S = 2.0
+
 
 def dry_run():
     return os.environ.get("BOSCAMOR_DRY_RUN") == "1"
@@ -126,6 +152,7 @@ def paths():
         p = {
             "state_json": os.path.join(dev, "state", "state.json"),
             "icon_cache": os.path.join(dev, "cache", "icons"),
+            "update": os.path.join(dev, "cache", "update"),
             "profiles": os.path.join(dev, "profiles"),
             "autostart": os.path.join(dev, "autostart", "boscamor.desktop"),
             "runtime": os.path.join(dev, "runtime"),
@@ -136,6 +163,7 @@ def paths():
         p = {
             "state_json": os.path.join(xdg("XDG_STATE_HOME", ".local/state"), "boscamor", "state.json"),
             "icon_cache": os.path.join(xdg("XDG_CACHE_HOME", ".cache"), "boscamor", "icons"),
+            "update": os.path.join(xdg("XDG_CACHE_HOME", ".cache"), "boscamor", "update"),
             "profiles": os.path.join(home, ".local/share/boscamor/profiles"),
             "autostart": os.path.join(xdg("XDG_CONFIG_HOME", ".config"), "autostart", "boscamor.desktop"),
             "runtime": os.path.join(run_base, "boscamor"),
@@ -143,8 +171,13 @@ def paths():
     if env.get("BOSCAMOR_RUNTIME_DIR"):  # D29: tests give the daemon its own folder
         p["runtime"] = env["BOSCAMOR_RUNTIME_DIR"]
     data_home = xdg("XDG_DATA_HOME", ".local/share")
+    state_dir = os.path.dirname(p["state_json"])
     p.update({
         "home": dev,
+        "update_json": os.path.join(state_dir, "update.json"),
+        "update_log": os.path.join(state_dir, "update.log"),
+        # Where install.sh puts the launcher and daemon; BOSCAMOR_ROOT is its test root.
+        "install": env.get("BOSCAMOR_ROOT", "") + "/opt/boscamor",
         "config": config,
         "apps_json": os.path.join(config, "apps.json"),
         "icons": os.path.join(config, "icons"),
@@ -317,6 +350,505 @@ def desktop_entry_for(classes, dirs):
     return None
 
 
+# Updates (D103) -----------------------------------------------------------------
+# The slow steps (HTTP, unpacking, the self-tests, install.sh) run in a child
+# process, `boscamor-input.py --update-job <kind> <json>`, so the modules and
+# buffers they need (urllib and ssl alone are about 3.5 MB) never stay in the
+# daemon, whose budget is 20 MB. The daemon keeps only the state machine.
+
+def parse_version(text):
+    """"v0.13.3" or "0.13.3" as (0, 13, 3); None for anything else."""
+    m = re.fullmatch(r"v?(\d+)\.(\d+)\.(\d+)", str(text or "").strip())
+    return tuple(int(x) for x in m.groups()) if m else None
+
+
+def parse_release(data):
+    """GitHub's latest release as {"version", "url", "size", "sha256"}.
+    Raises ValueError with words for Settings when it has no update in it."""
+    version = parse_version(data.get("tag_name") if isinstance(data, dict) else None)
+    if not version:
+        raise ValueError("The latest release has no version")
+    for a in data.get("assets") or []:
+        if not isinstance(a, dict) or a.get("name") != UPDATE_ASSET:
+            continue
+        digest = str(a.get("digest") or "")
+        url = str(a.get("browser_download_url") or "")
+        if not re.fullmatch(r"sha256:[0-9a-f]{64}", digest) or not url.startswith(("https://", "http://")):
+            raise ValueError("The latest release has no checksum")
+        return {"version": "%d.%d.%d" % version, "url": url,
+                "size": int(a.get("size") or 0), "sha256": digest[7:]}
+    raise ValueError("The latest release has no update file")
+
+
+def write_json_atomic(path, data):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(data, f)
+    os.replace(tmp, path)
+
+
+def unpack(archive, dest):
+    """Unpacks an update archive into dest (which must not exist yet): regular
+    files and folders only, every one inside dest."""
+    import tarfile
+    with tarfile.open(archive, "r:xz") as tar:
+        members = tar.getmembers()
+        for m in members:
+            name = os.path.normpath(m.name)
+            if not (m.isfile() or m.isdir()) or os.path.isabs(name) \
+                    or name == ".." or name.startswith("../"):
+                raise ValueError("unexpected entry %r" % m.name)
+        os.makedirs(dest)
+        if hasattr(tarfile, "data_filter"):
+            tar.extractall(dest, members=members, filter="data")
+        else:
+            tar.extractall(dest, members=members)
+    for need in UPDATE_NEEDS:
+        if not os.path.isfile(os.path.join(dest, need)):
+            raise ValueError("%s is missing" % need)
+
+
+def http_open(url, headers=None):
+    import urllib.request
+    h = {"User-Agent": "boscamor-input", "Accept": "application/vnd.github+json"}
+    h.update(headers or {})
+    return urllib.request.urlopen(urllib.request.Request(url, headers=h), timeout=UPDATE_HTTP_TIMEOUT_S)
+
+
+def job_check(api):
+    """The latest release: {"ok": True, "release": {...}} or {"ok": False, "error": words}."""
+    try:
+        with http_open(api) as r:
+            body = r.read(UPDATE_API_MAX + 1)
+        if len(body) > UPDATE_API_MAX:
+            raise ValueError("The release information was too long")
+        return {"ok": True, "release": parse_release(json.loads(body))}
+    except ValueError as e:  # JSON errors are ValueErrors too
+        log.warning("update check: %s", e)
+        words = str(e) if str(e).startswith("The ") else "The release information was damaged"
+        return {"ok": False, "error": words}
+    except OSError as e:  # urllib's errors, timeouts
+        log.warning("update check: %s", e)
+        return {"ok": False, "error": "Couldn't reach GitHub"}
+
+
+def job_download(rel, folder, progress):
+    """Downloads, checks, unpacks and self-tests a release into folder/<version>.
+    A part download is kept on any error and carried on next time."""
+    import hashlib
+    import lzma
+    import tarfile
+    os.makedirs(folder, exist_ok=True)
+    name = "boscamor-%s.tar.xz" % rel["version"]
+    part = os.path.join(folder, name + ".part")
+    for other in os.listdir(folder):
+        if other.endswith(".part") and other != name + ".part":
+            os.remove(os.path.join(folder, other))
+    if shutil.disk_usage(folder).free < rel["size"] * UPDATE_SPACE_FACTOR:
+        return {"ok": False, "error": "Not enough disk space"}
+    try:
+        fetch(rel, part, progress)
+    except OSError as e:
+        log.warning("update download: %s", e)
+        return {"ok": False, "error": "Couldn't download it"}
+    h = hashlib.sha256()
+    with open(part, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    if h.hexdigest() != rel["sha256"]:
+        log.warning("update download: checksum does not match; deleted")
+        os.remove(part)
+        return {"ok": False, "error": "The download was damaged"}
+    target = os.path.join(folder, rel["version"])
+    shutil.rmtree(target, ignore_errors=True)
+    try:
+        unpack(part, target)
+    except (OSError, EOFError, ValueError, tarfile.TarError, lzma.LZMAError) as e:
+        log.warning("update unpack: %s", e)
+        shutil.rmtree(target, ignore_errors=True)
+        os.remove(part)
+        return {"ok": False, "error": "The download was damaged"}
+    os.remove(part)
+    error = self_test(target, rel["version"])
+    if error:
+        shutil.rmtree(target, ignore_errors=True)
+        return {"ok": False, "error": error}
+    return {"ok": True, "dir": target}
+
+
+def fetch(rel, part, progress):
+    """Downloads to part, carrying on from what is already there."""
+    import urllib.error
+    have = os.path.getsize(part) if os.path.exists(part) else 0
+    if have > rel["size"]:
+        os.remove(part)
+        have = 0
+    if have and have == rel["size"]:
+        return
+    try:
+        r = http_open(rel["url"], {"Accept": "application/octet-stream",
+                                   **({"Range": "bytes=%d-" % have} if have else {})})
+    except urllib.error.HTTPError as e:
+        if e.code == 416:  # what was kept doesn't fit this file: start again next time
+            os.remove(part)
+        raise
+    with r:
+        if have and r.status != 206:
+            have = 0  # the server sent the whole file
+        done = have
+        with open(part, "ab" if have else "wb") as f:
+            while True:
+                chunk = r.read(UPDATE_CHUNK)
+                if not chunk:
+                    break
+                f.write(chunk)
+                done += len(chunk)
+                if rel["size"]:
+                    progress(min(99, done * 100 // rel["size"]))
+    if rel["size"] and done != rel["size"]:
+        raise OSError("got %d of %d bytes" % (done, rel["size"]))
+
+
+def self_test(root, version):
+    """Why the unpacked release can't be installed, in words, or "". The new
+    daemon must start, and the new launcher must start (headless) and say it
+    is the version the release says."""
+    try:
+        with open(os.path.join(root, "version")) as f:
+            if f.read().strip() != version:
+                return "The download was damaged"
+    except OSError:
+        return "The download was damaged"
+    tests = [
+        ([sys.executable, os.path.join(root, "daemon", "boscamor-input.py"), "--self-test"],
+         "self-test ok"),
+        # Its own log file: Godot's default one would rotate the running launcher's log away.
+        ([os.path.join(root, "build", "boscamor"), "--headless", "--log-file",
+          os.path.join(root, "self-test.log"), "--", "--self-test"],
+         "self-test ok %s" % version),
+    ]
+    for argv, want in tests:
+        name = os.path.basename(argv[1] if argv[0] == sys.executable else argv[0])
+        try:
+            r = subprocess.run(argv, capture_output=True, text=True, errors="replace",
+                               timeout=UPDATE_TEST_TIMEOUT_S, stdin=subprocess.DEVNULL)
+        except (OSError, subprocess.SubprocessError) as e:
+            log.warning("update self-test %s: %s", name, e)
+            return "The new version didn't start"
+        if r.returncode != 0 or want not in r.stdout.splitlines():
+            log.warning("update self-test %s: exit %s, %s", name, r.returncode,
+                        (r.stdout + r.stderr).strip()[-500:])
+            return "The new version didn't start"
+    return ""
+
+
+def job_install(root, version, old, install_dir, state_path, log_path):
+    """install.sh --update from the unpacked release, after keeping the
+    current files in previous/; they go back if it fails."""
+    if dry_run() and not os.environ.get("BOSCAMOR_ROOT"):
+        log.info("dry run: would run %s --update", os.path.join(root, "install", "install.sh"))
+        return {"ok": False, "error": "Dry run: nothing was installed"}
+    prev = os.path.join(install_dir, "previous")
+    saved = []
+    try:
+        os.makedirs(prev, exist_ok=True)
+        for name in UPDATE_KEEP:
+            src = os.path.join(install_dir, name)
+            if os.path.isfile(src):
+                shutil.copy2(src, os.path.join(prev, name))
+                saved.append(name)
+    except OSError as e:
+        log.warning("update: could not keep the current version: %s", e)
+        return {"ok": False, "error": "Couldn't install it"}
+    argv = ["bash", os.path.join(root, "install", "install.sh"), "--update"]
+    code = None
+    try:
+        os.makedirs(os.path.dirname(log_path), exist_ok=True)
+        with open(log_path, "w") as out:
+            out.write("Update from %s to %s\n" % (old, version))
+            out.flush()
+            code = subprocess.run(argv, stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT,
+                                  cwd=root, timeout=UPDATE_INSTALL_TIMEOUT_S).returncode
+    except (OSError, subprocess.SubprocessError) as e:
+        log.warning("update: install.sh: %s", e)
+    if code not in (0, 3):
+        log.warning("update: install.sh ended with %s; putting the old version back (%s)", code, log_path)
+        for name in saved:
+            tmp = os.path.join(install_dir, name + ".restore")
+            try:
+                shutil.copy2(os.path.join(prev, name), tmp)
+                os.replace(tmp, os.path.join(install_dir, name))
+            except OSError as e:
+                log.warning("update: could not put back %s: %s", name, e)
+        return {"ok": False, "error": "Couldn't install it"}
+    if code == 3:
+        log.warning("update: some system changes need sudo: run install/install.sh by hand (%s)", log_path)
+    try:
+        write_json_atomic(state_path, {"version": version, "from": old, "restart": True,
+                                       "needs_sudo": code == 3, "at": int(time.time())})
+    except OSError as e:
+        log.warning("could not write %s: %s", state_path, e)
+    shutil.rmtree(root, ignore_errors=True)
+    return {"ok": True}
+
+
+def update_job(kind, args, out):
+    """The child process's side: one job, its progress and result as JSON
+    lines on stdout (out). SIGTERM stops a download; what is kept resumes."""
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(1))
+    if kind == "check":
+        res = job_check(args["api"])
+    elif kind == "download":
+        res = job_download(args["release"], args["dir"], lambda pct: out({"progress": pct}))
+    elif kind == "install":
+        res = job_install(args["root"], args["version"], args["old"], args["install"],
+                          args["state"], args["log"])
+    else:
+        res = {"ok": False, "error": "Something went wrong"}
+    out({"result": res})
+
+
+class Updater:
+    """Finds, fetches, checks and installs new releases of the launcher (D103).
+
+    Runs on the daemon's loop, which calls tick() and sends what events()
+    returns. Each slow step is a child process (update_job); one thread per
+    job only waits for its lines and puts them on a queue."""
+
+    def __init__(self, p=None, api=None):
+        p = p or paths()
+        self.dir = p["update"]
+        self.state_path = p["update_json"]
+        self.log_path = p["update_log"]
+        self.install_dir = p["install"]
+        self.api = api or os.environ.get("BOSCAMOR_UPDATE_URL") or UPDATE_API
+        self.wake = None           # a socket that wakes the daemon's select() when a job ends
+        self.installed = None      # the running launcher's version, from its hello
+        self.release = None        # the newest release, when it is newer than installed
+        self.ready = None          # its unpacked, checked and self-tested folder
+        self.download_failed = False
+        self.want_install = False
+        self.status = {"status": "unknown"}
+        self.next_check = None     # none until a launcher says hello
+        self.job = None
+        self.restart_daemon = False  # an update is in: the daemon starts its new self
+        # Set after an update until the new launcher says hello: the old one is
+        # asked to restart, then told to quit once the new one is up.
+        self.handover = None
+        self._proc = None
+        self._thread = None
+        self._stopping = False
+        self._results = queue.Queue()
+        self._out = []
+        self._load_state()
+
+    def _load_state(self):
+        """After an update the daemon starts again: the launcher still on screen
+        is the old one, so it is asked to restart. Only once per update."""
+        try:
+            with open(self.state_path) as f:
+                st = json.load(f)
+        except (OSError, ValueError):
+            st = None
+        if isinstance(st, dict) and st.get("restart") and parse_version(st.get("version")):
+            self.handover = st["version"]
+            st["restart"] = False
+            try:
+                write_json_atomic(self.state_path, st)
+            except OSError as e:
+                log.warning("could not write %s: %s", self.state_path, e)
+        # Unpacked folders from before are checked again before any install;
+        # a part download is kept and carried on.
+        try:
+            for name in os.listdir(self.dir):
+                path = os.path.join(self.dir, name)
+                if os.path.isdir(path):
+                    shutil.rmtree(path, ignore_errors=True)
+        except OSError:
+            pass
+
+    def _set(self, **status):
+        self.status = status
+        self._out.append(dict(status, evt="update"))
+
+    def event(self):
+        return dict(self.status, evt="update")
+
+    def events(self):
+        """Status changes since the last call, as events for the launcher."""
+        out, self._out = self._out, []
+        return out
+
+    def hello(self, version):
+        """A launcher said which version it is. The one an update just
+        installed counts; an old one about to restart doesn't."""
+        if not parse_version(version):
+            return
+        if self.handover and version != self.handover:
+            return
+        changed = version != self.installed
+        self.installed = version
+        if self.next_check is None:
+            self.next_check = time.monotonic() + UPDATE_FIRST_CHECK_S
+        if changed and self.release and parse_version(self.release["version"]) <= parse_version(version):
+            # Installed some other way meanwhile (the installer by hand).
+            self._forget()
+            self._set(status="current", version=version)
+
+    def check(self):
+        """Look for a new release now. False if that can't start yet."""
+        if self.job or not self.installed:
+            return False
+        self._set(status="checking", version=self.installed)
+        self._start("check", {"api": self.api})
+        return True
+
+    def install(self):
+        """Install the ready update as soon as nothing else runs."""
+        if not self.ready:
+            self._set(status="failed", error="No update is ready to install", version=self.installed)
+            return False
+        self.want_install = True
+        return True
+
+    def tick(self, now, busy):
+        """busy: an app runs, or the desktop is showing. Downloads wait for
+        neither, so they never take the line from a stream."""
+        if busy and self.job == "download" and not self._stopping:
+            self._stopping = True
+            try:
+                self._proc.terminate()
+            except (OSError, AttributeError):
+                pass
+        self._collect()
+        if self.job or not self.installed:
+            return
+        if self.want_install and self.ready and not busy:
+            self.want_install = False
+            self._set(status="installing", version=self.release["version"])
+            self._start("install", {"root": self.ready, "version": self.release["version"],
+                                    "old": self.installed, "install": self.install_dir,
+                                    "state": self.state_path, "log": self.log_path})
+        elif self.next_check is not None and now >= self.next_check:
+            self.next_check = now + UPDATE_EVERY_S
+            self.check()
+        elif self.release and not self.ready and not self.download_failed and not busy:
+            was = self.status.get("percent", 0) if self.status.get("status") in ("downloading", "available") else 0
+            self._set(status="downloading", version=self.release["version"], percent=was)
+            self._start("download", {"release": dict(self.release), "dir": self.dir})
+
+    def next_due(self, now):
+        if self.job or self.next_check is None:
+            return None
+        return self.next_check
+
+    def wait(self, timeout=60.0):
+        """Tests: until the running job has finished."""
+        if self._thread:
+            self._thread.join(timeout)
+        self._collect()
+
+    def _forget(self):
+        self.release = None
+        self.ready = None
+        self.download_failed = False
+        self.want_install = False
+
+    def _start(self, kind, args):
+        self.job = kind
+        self._stopping = False
+        argv = [sys.executable, os.path.abspath(__file__), "--update-job", kind, json.dumps(args)]
+        try:
+            self._proc = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE)
+        except OSError as e:
+            log.warning("could not start the update %s: %s", kind, e)
+            self._results.put((kind, {"ok": False, "error": "Something went wrong"}))
+            return
+        self._thread = threading.Thread(target=self._read, args=(kind, self._proc), daemon=True,
+                                        name="update-" + kind)
+        self._thread.start()
+
+    def _read(self, kind, proc):
+        """Job thread: the child's lines onto the queue, then its result."""
+        result = None
+        for line in proc.stdout:
+            try:
+                msg = json.loads(line)
+            except ValueError:
+                continue
+            if "progress" in msg:
+                self._results.put(("progress", msg["progress"]))
+            elif "result" in msg:
+                result = msg["result"]
+        proc.stdout.close()
+        proc.wait()
+        if result is None:
+            stopped = self._stopping and kind == "download"
+            result = {"ok": False, "paused": True} if stopped else {"ok": False, "error": "Something went wrong"}
+        self._results.put((kind, result))
+        if self.wake is not None:
+            try:
+                self.wake.send(b"u")
+            except OSError:
+                pass
+
+    def _collect(self):
+        while True:
+            try:
+                kind, res = self._results.get_nowait()
+            except queue.Empty:
+                return
+            if kind == "progress":
+                if self.status.get("status") == "downloading" and res != self.status.get("percent"):
+                    self._set(**dict(self.status, percent=res))
+                continue
+            self.job = None
+            self._proc = None
+            getattr(self, "_done_" + kind)(res)
+
+    def _done_check(self, res):
+        if not res["ok"]:
+            self._set(status="failed", error=res["error"], version=self.installed)
+            return
+        rel = res["release"]
+        if parse_version(rel["version"]) <= parse_version(self.installed):
+            self._forget()
+            self._set(status="current", version=self.installed)
+            return
+        if rel != self.release:
+            self.ready = None
+            self.release = rel
+        self.download_failed = False
+        if self.ready:
+            self._set(status="ready", version=rel["version"])
+        else:
+            self._set(status="available", version=rel["version"])
+
+    def _done_download(self, res):
+        if res.get("ok"):
+            self.ready = res["dir"]
+            log.info("update %s downloaded and checked", self.release["version"])
+            self._set(status="ready", version=self.release["version"])
+        elif res.get("paused"):
+            log.info("update download paused while an app is open")
+            self._set(status="available", version=self.release["version"],
+                      percent=self.status.get("percent", 0))
+        else:
+            self.download_failed = True  # tried again after the next check
+            self._set(status="failed", error=res["error"], version=self.installed)
+
+    def _done_install(self, res):
+        if res.get("ok"):
+            log.info("update %s installed; restarting", self.release["version"])
+            self._forget()
+            self.restart_daemon = True
+        else:
+            self.ready = None  # unpacked again from a fresh download
+            self.download_failed = True
+            self._set(status="failed", error=res["error"], version=self.installed)
+
+
 # The daemon -------------------------------------------------------------------
 
 class App:
@@ -357,11 +889,12 @@ class Client:
         self.buf = b""
         self.authed = False
         self.since = now
+        self.version = None  # a launcher's, from its hello
 
 
 class Daemon:
     def __init__(self, runtime=None, proc_root="/proc", fake_input=False, evdev=True,
-                 dev_port=None):
+                 dev_port=None, updater=None):
         self.runtime = runtime or paths()["runtime"]
         self.dev_port = dev_port
         self.proc_root = proc_root
@@ -387,7 +920,10 @@ class Daemon:
         self.returning = None  # {"deadline", "next"} while closing desktop windows
         self.focus_until = None  # keeping the launcher focused (D78)
         self.next_focus = 0.0
+        self.focus_hold_until = 0.0  # no focus check before this (HANDOVER_FOCUS_S)
         self.app_dirs = paths()["app_dirs"]
+        self.updater = updater or Updater()
+        self.install_asked = False  # an update waits for the running app to end
 
     # Overridable for tests.
     def now(self):
@@ -467,6 +1003,7 @@ class Daemon:
         signal.signal(signal.SIGCHLD, lambda *_: None)
         signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
         self._wake = (r, w)
+        self.updater.wake = w  # an update job that ends wakes the loop the same way
         self.sel.register(r, selectors.EVENT_READ, lambda s: s.recv(4096))
 
     def close(self):
@@ -514,6 +1051,7 @@ class Daemon:
             self.next_mem = now + MEM_SAMPLE_S
         if self.returning and now >= self.returning["next"]:
             self.poll_return()
+        self.tick_update(now)
         for c in list(self.clients):
             if not c.authed and now - c.since > HANDSHAKE_S:
                 log.warning("dropping a client that sent no token")
@@ -539,6 +1077,9 @@ class Daemon:
             due.append(self.next_focus)
         if self.returning:
             due.append(self.returning["next"])
+        update_due = self.updater.next_due(now)
+        if update_due is not None:
+            due.append(update_due)
         due += [c.since + HANDSHAKE_S for c in self.clients if not c.authed]
         return max(0.0, min(due) - now)
 
@@ -574,7 +1115,7 @@ class Daemon:
                 log.warning("dropping a client with a bad token")
                 self._drop(c)
                 return
-            self._handle_line(line)
+            self._handle_line(line, c)
             if c not in self.clients:
                 return
         if len(c.buf) > MAX_LINE:
@@ -590,7 +1131,7 @@ class Daemon:
                 pass
             c.sock.close()
 
-    def _handle_line(self, line):
+    def _handle_line(self, line, client=None):
         try:
             msg = json.loads(line)
         except (ValueError, RecursionError):
@@ -601,7 +1142,7 @@ class Daemon:
         # One bad command must not end the daemon: its restart would lose
         # track of the running app, so Home could no longer close it.
         try:
-            self.handle(msg)
+            self.handle(msg, client)
         except Exception:
             log.exception("command %r failed", msg.get("cmd"))
 
@@ -615,7 +1156,13 @@ class Daemon:
             except OSError:
                 self._drop(c)
 
-    def handle(self, msg):
+    def send_to(self, c, evt):
+        try:
+            c.sock.sendall((json.dumps(evt) + "\n").encode())
+        except OSError:
+            self._drop(c)
+
+    def handle(self, msg, client=None):
         cmd = msg.get("cmd")
         if cmd == "state":
             was = self.visible
@@ -650,8 +1197,83 @@ class Daemon:
             self.show_window(msg.get("wid"))
         elif cmd == "force_close":
             self.force_close(msg.get("wids"))
+        elif cmd == "hello":
+            self.hello(client, msg.get("version"))
+        elif cmd == "update_check":
+            if not self.updater.check():
+                self.send(self.updater.event())  # already busy: say what it is doing
+        elif cmd == "update_install":
+            self.install_update()
         else:
             log.warning("unknown command %r", cmd)
+
+    # Updates (D103) -----------------------------------------------------------
+
+    def hello(self, client, version):
+        """A launcher says which version it is. Right after an update the old
+        launcher is still on screen: it is asked to restart, and once the new
+        one says hello the old one is told to quit."""
+        version = version if isinstance(version, str) else None
+        if client:
+            client.version = version
+        u = self.updater
+        if u.handover and client and version:
+            if version != u.handover:
+                log.info("update: launcher %s is the old one; asking it to restart into %s", version, u.handover)
+                self.send_to(client, {"evt": "update", "status": "restart", "version": u.handover})
+                return
+            for other in list(self.clients):
+                if other is not client and other.version:
+                    log.info("update: launcher %s is up; the old one quits", version)
+                    self.send_to(other, {"evt": "quit"})
+                    self._drop(other)
+                    self.focus_hold_until = self.now() + HANDOVER_FOCUS_S
+            u.handover = None
+            u.hello(version)
+            u.status = {"status": "current", "version": version}
+            self.send_to(client, dict(u.event(), installed=True))
+            return
+        u.hello(version)
+        if client:
+            self.send_to(client, u.event())
+
+    def install_update(self):
+        """Settings or the idle launcher asked for the ready update. A running
+        app (a keep_on_home one) is ended first, the way a new launch ends it."""
+        if self.updater.ready and self.app:
+            log.info("update: ending %s first", self.app.id)
+            self.install_asked = True
+            if not self.app.closing:
+                self.close_app(then_show=False)
+            return
+        self.updater.install()
+
+    def tick_update(self, now):
+        if self.install_asked and not self.app:
+            self.install_asked = False
+            self.updater.install()
+        self.updater.tick(now, self.app is not None or self.desktop)
+        for e in self.updater.events():
+            self.send(e)
+        if self.updater.restart_daemon:
+            self.updater.restart_daemon = False
+            self.reexec()
+
+    def reexec(self):
+        """The update is in: the new daemon starts in place of this one, with
+        the same pid, so systemd and the session see nothing change. The
+        launcher reconnects and is asked to restart (hello)."""
+        argv = [sys.executable, os.path.abspath(sys.argv[0])] + sys.argv[1:]
+        if dry_run():
+            log.info("dry run: would start the new daemon: %s", " ".join(argv))
+            return
+        log.info("starting the updated daemon")
+        self.close()
+        try:
+            os.execv(argv[0], argv)
+        except OSError as e:
+            log.error("could not start the updated daemon: %s", e)
+            sys.exit(1)  # Restart=on-failure starts it
 
     # Keys ---------------------------------------------------------------------
 
@@ -718,6 +1340,9 @@ class Daemon:
 
     def poll_launcher_focus(self):
         now = self.now()
+        if now < self.focus_hold_until:
+            self.next_focus = self.focus_hold_until
+            return
         if not self.visible and now > self.next_focus + LAUNCHER_FOCUS_S:
             self.focus_until = None
             return
@@ -1359,7 +1984,23 @@ def main(argv=None):
                    help="ask the running daemon to return from the desktop, then exit")
     p.add_argument("--dev-port", type=int, metavar="PORT",
                    help="dev machine only: bind this fixed port and print BOSCAMOR_IPC=PORT:TOKEN")
+    p.add_argument("--self-test", action="store_true",
+                   help="start and stop: an update checks that the new daemon runs (D103)")
+    p.add_argument("--update-job", nargs=2, metavar=("KIND", "JSON"), help=argparse.SUPPRESS)
     args = p.parse_args(argv)
+    if args.self_test:
+        paths()
+        print("self-test ok")
+        return 0
+    if args.update_job:
+        # The daemon's child for one slow update step (D103): lines on stdout,
+        # its log on stderr (the journal, like the daemon's).
+        logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+
+        def out(msg):
+            print(json.dumps(msg), flush=True)
+        update_job(args.update_job[0], json.loads(args.update_job[1]), out)
+        return 0
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     if args.ret:
         return send_return()

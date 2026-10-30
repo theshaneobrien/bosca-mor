@@ -214,6 +214,10 @@ const PICTURE_KEEP := 15.0          # a new picture goes back unless it is kept 
 const WIFI_SCAN_TIMEOUT := 15       # D81: seconds for nmcli to list networks (a rescan takes a few)
 const WIFI_CONNECT_TIMEOUT := 45    # and to join one
 
+# Updates (D103)
+const UPDATE_IDLE := 600.0          # a ready update installs after this long with no key or click, shown and on Home, the sidebar or Settings
+const UPDATE_WAIT := 360.0          # "Updating" gives up and returns Home after this (the daemon allows install.sh 300 s)
+
 # Toast (D62: no design; built from the dialog, button and menu tokens)
 const TOAST_HEIGHT := BUTTON
 const TOAST_PAD := STILL_ROW_PAD

@@ -30,12 +30,22 @@ def bitmap(codes):
     return " ".join("%x" % w for w in reversed(words))
 
 
+def scratch_paths():
+    """Update folders in a new temp folder, so no test reads or clears a real one."""
+    tmp = tempfile.mkdtemp(prefix="update-test-")
+    return {"update": os.path.join(tmp, "cache", "update"),
+            "update_json": os.path.join(tmp, "state", "update.json"),
+            "update_log": os.path.join(tmp, "state", "update.log"),
+            "install": os.path.join(tmp, "sys", "opt", "boscamor")}
+
+
 class Recorder(bi.Daemon):
     """A daemon that records what it sends, runs and signals."""
 
     def __init__(self, **kw):
         kw.setdefault("runtime", tempfile.mkdtemp())
         kw.setdefault("evdev", False)
+        kw.setdefault("updater", bi.Updater(p=scratch_paths()))
         super().__init__(**kw)
         self.sent = []
         self.ran = []

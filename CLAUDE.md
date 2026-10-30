@@ -49,9 +49,10 @@ tools/
   box-report.sh      on the box: everything a dev session needs, as a .tar.gz
   deploy.sh          rsync build + daemon to the box (releases are the usual route)
   boot-splash.sh     optional Plymouth splash with Chief's picture (never committed)
+  update-bundle.sh   build/boscamor.tar.xz, the update each release carries (D103)
   build-godot-template.sh, godot-template/   the patched Godot export template (D100)
   linux-dev-setup.sh Godot editor and SCons for a Linux dev machine, no root
-docs/                SPEC.md, DECISIONS.md (D14 to D102), PROMPTS.md (history), design/ (reference screens)
+docs/                SPEC.md, DECISIONS.md (D14 to D103), PROMPTS.md (history), design/ (reference screens)
 RUNBOOK.md           status, pending on box, deferred, blocked, releasing
 ```
 

@@ -306,6 +306,10 @@ These are targets. Check them with `pidstat -p <pid> 5` for CPU and `intel_gpu_t
 | Daemon to launcher | `{"evt":"memory_warning","id":"plex","available_mb":400}` | Memory stayed low (SPEC Memory watch) |
 | Daemon to launcher | `{"evt":"accept"}` | OK on the remote with the air mouse off (`KEY_SELECT`), which X has no key for (D82) |
 | Daemon to launcher | `{"evt":"power_failed","action":"poweroff"}` | systemctl refused; after a dry run the daemon sends `show` instead (D89) |
+| Launcher to daemon | `{"cmd":"hello","version":"0.14.0"}` | First on each connection: the launcher's version, for updates (D103) |
+| Launcher to daemon | `{"cmd":"update_check"}` / `{"cmd":"update_install"}` | Look for a release now / install the ready one, ending a running app first (D103) |
+| Daemon to launcher | `{"evt":"update","status":"downloading","version":"0.14.0","percent":40}` | The updater's state: unknown, checking, current, available, downloading, ready, installing, failed (with `error`), or restart (start the new launcher); `installed` on the new launcher's first `current` (D103) |
+| Daemon to launcher | `{"evt":"quit"}` | The new launcher is up after an update: the old one quits (D103) |
 
 The window raise uses `wmctrl -F -a Launcher` (the window title), and the daemon keeps activating the launcher until it has the focus (D69, D78).
 

@@ -10,6 +10,7 @@ extends Node
 const Apps := preload("res://scripts/apps.gd")
 const Paths := preload("res://scripts/paths.gd")
 const Tokens := preload("res://theme/tokens.gd")
+const SystemInfo := preload("res://scripts/system_info.gd")
 
 ## The daemon wants Home shown: Home or Guide pressed while hidden, or an app
 ## closed by Home.
@@ -35,6 +36,12 @@ signal accept_pressed
 ## said the command failed. kind is "poweroff" or "restart".
 signal power_failed(kind: String)
 signal connected_changed(connected: bool)
+## Where the daemon's updater is (D103): {status, version, percent, error,
+## installed}. status is unknown, checking, current, available, downloading,
+## ready, installing, failed or restart.
+signal update_changed(info: Dictionary)
+## A newer launcher has taken over after an update: this one quits.
+signal quit_requested
 
 ## Seconds before the stand-in pretends an app exited or a power-off was a
 ## dry run. Below 0 it never does (tests).
@@ -50,6 +57,8 @@ var stand_in := OS.get_name() != "Linux"
 var connected := false
 ## The app waiting for its first window, or "".
 var waiting_id := ""
+## The updater's last status, {} until the daemon says.
+var update := {}
 ## Tests set this to drive the launch deadline; below 0 reads the real clock.
 var fake_now_ms := -1
 var _window_deadline := 0
@@ -137,6 +146,25 @@ func back_to_desktop() -> void:
 func _send_hiding(msg: Dictionary) -> void:
 	if not _send(msg) and not stand_in:
 		push_warning("no daemon: Home won't bring the launcher back; click it in the taskbar")
+
+
+## Look for a new release now (Settings > About).
+func check_update() -> void:
+	_record(["update_check"])
+	_send({"cmd": "update_check"})
+
+
+## Install the update that is ready. The daemon ends a running app first,
+## installs, and then asks this launcher to restart (D103).
+func install_update() -> void:
+	_record(["update_install"])
+	if not _send({"cmd": "update_install"}):
+		_on_update.call_deferred({"status": "failed", "error": "The background service isn't running"})
+
+
+func _on_update(info: Dictionary) -> void:
+	update = info
+	update_changed.emit(info)
 
 
 ## Tells the daemon whether the launcher is on screen, so it knows whether
@@ -231,6 +259,8 @@ func poll() -> void:
 				_sent_token = true
 				_peer.put_data((_token + "\n").to_utf8_buffer())
 				_set_connected(true)
+				# Which version this is: the daemon's updater compares releases with it.
+				_send({"cmd": "hello", "version": SystemInfo.version()})
 				_send({"cmd": "state", "visible": _visible})
 			_read()
 		_:
@@ -263,6 +293,8 @@ func _set_connected(c: bool) -> void:
 		connected = c
 		print("daemon %s" % ("connected" if c else "not connected"))
 		connected_changed.emit(c)
+		if not c and not update.is_empty():
+			_on_update({})              # the daemon says again on hello
 
 
 func _send(msg: Dictionary) -> bool:
@@ -329,5 +361,10 @@ func _dispatch(msg: Dictionary) -> void:
 		"memory_warning":
 			var app_id = msg.get("id")
 			memory_warning.emit("" if app_id == null else str(app_id), int(msg.get("available_mb", 0)))
+		"update":
+			msg.erase("evt")
+			_on_update(msg)
+		"quit":
+			quit_requested.emit()
 		var other:
 			push_warning("daemon: unknown event %s" % other)

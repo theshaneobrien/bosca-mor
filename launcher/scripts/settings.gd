@@ -19,6 +19,10 @@ signal picture_requested(mode: String)
 ## Something for Main to show as a toast (Wi-Fi, and any other Settings
 ## message, such as a save that failed).
 signal wifi_message(text: String)
+## About > Updates (D103): install the ready update (Main asks first), or
+## look for one now.
+signal update_requested
+signal update_check_requested
 
 const Tokens := preload("res://theme/tokens.gd")
 const Glyphs := preload("res://scripts/glyphs.gd")
@@ -75,6 +79,8 @@ var user_js := USER_JS
 var accepting_input := false
 ## The daemon's last memory warning, for About.
 var memory_note := ""
+## The daemon's updater, for About (DaemonClient.update).
+var update_info := {}
 ## Tests: the display scale to draw at; 0 reads it from the window.
 var fixed_scale := 0.0
 ## SystemSetup, for what the TV and sound are doing now. Null: rows hidden.
@@ -295,6 +301,12 @@ func _accept() -> void:
 			_change(it.key)
 		"button":
 			launch_panel.emit(PANELS[section_id()])
+		"update":
+			var status := str(update_info.get("status", ""))
+			if status == "ready":
+				update_requested.emit()
+			elif not status in ["checking", "downloading", "installing", "restart"]:
+				update_check_requested.emit()
 		"wifi":
 			_join(it.net)
 		"rescan":
@@ -629,7 +641,7 @@ func keep_picture(mode: String) -> void:
 ## SystemSetup finished a job: show what the TV, sound and Wi-Fi are doing
 ## now, with the focus on the same row if it is still there.
 func refresh() -> void:
-	if not visible or level == "picker" or not section_id() in ["display", "sound", "network"]:
+	if not visible or level == "picker" or not section_id() in ["display", "sound", "network", "about"]:
 		return
 	var was := _current()
 	_build_items()
@@ -703,6 +715,8 @@ func _build_items() -> void:
 				_items.append({"type": "info", "label": "Open the launcher at login", "value": "Not set up on this device"})
 		"about":
 			_items.append({"type": "info", "label": "Version", "value": SystemInfo.version()})
+			_items.append({"type": "update", "key": "update", "label": "Updates", "value": update_words(update_info),
+					"warn": update_info.get("status", "") == "failed"})
 			_items.append({"type": "info", "label": "Device name", "value": SystemInfo.hostname()})
 			_items.append({"type": "info", "label": "IP address", "value": SystemInfo.ip_addresses()})
 			var mem := SystemInfo.memory()
@@ -712,6 +726,29 @@ func _build_items() -> void:
 			_items.append({"type": "info", "label": "Session", "value": "%s, window handling needs X11" % session if warn else session, "warn": warn})
 			if memory_note:
 				_items.append({"type": "info", "label": "Last memory warning", "value": memory_note, "warn": true})
+
+
+## What the updater is doing, for the Updates row.
+static func update_words(info: Dictionary) -> String:
+	var v := str(info.get("version", ""))
+	match str(info.get("status", "")):
+		"unknown":
+			return "Not checked yet"
+		"checking":
+			return "Checking"
+		"current":
+			return "Up to date"
+		"available":
+			return "Version %s found" % v
+		"downloading":
+			return "Downloading %s, %d%%" % [v, int(info.get("percent", 0))]
+		"ready":
+			return "Version %s is ready" % v
+		"installing", "restart":
+			return "Installing %s" % v
+		"failed":
+			return str(info.get("error", "Couldn't check"))
+	return "Needs the background service"
 
 
 func _screen_now() -> String:
@@ -923,6 +960,13 @@ func _hint_pairs() -> Array:
 			return [["accept", "Connect"], ["back", "Back"]]
 		"rescan":
 			return [["accept", "Search"], ["back", "Back"]]
+		"update":
+			match str(update_info.get("status", "")):
+				"ready":
+					return [["accept", "Update"], ["back", "Back"]]
+				"checking", "downloading", "installing", "restart":
+					return [["back", "Back"]]
+			return [["accept", "Check now"], ["back", "Back"]]
 	return [["back", "Back"]]
 
 
@@ -1008,7 +1052,7 @@ func _row(it: Dictionary, on: bool) -> Control:
 			match it.type:
 				"toggle":
 					row.add_child(_toggle(it.on))
-				"choice", "info", "website", "wifi":
+				"choice", "info", "website", "wifi", "update":
 					var v := UI.label(it.value, Tokens.mono(400, Tokens.KIND_FONT), Tokens.KIND_FONT, Tokens.CORAL if it.get("warn", false) else Tokens.MUTED)
 					v.size_flags_vertical = SIZE_SHRINK_CENTER
 					row.add_child(v)

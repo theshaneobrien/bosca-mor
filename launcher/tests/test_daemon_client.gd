@@ -88,13 +88,30 @@ func _say(line: String) -> void:
 		client.poll()
 
 
-func test_handshake_token_first_then_state() -> void:
+func test_handshake_token_first_then_hello_and_state() -> void:
 	_setup()
 	check(conn != null, "connected")
 	check(client.connected, "client says connected")
 	var lines := _lines()
 	eq(lines[0], "secret-token", "token is the first line")
-	eq(JSON.parse_string(lines[1]), {"cmd": "state", "visible": true}, "then the state")
+	eq(JSON.parse_string(lines[1]), {"cmd": "hello", "version": ProjectSettings.get_setting("application/config/version")},
+		"then which version this is (D103)")
+	eq(JSON.parse_string(lines[2]), {"cmd": "state", "visible": true}, "then the state")
+	_teardown()
+
+
+func test_updates_go_out_and_come_in() -> void:
+	_setup()
+	_lines()
+	var infos := []
+	client.update_changed.connect(func(info): infos.append(info))
+	client.quit_requested.connect(func(): infos.append("quit"))
+	client.check_update()
+	client.install_update()
+	eq(_lines().map(func(l): return JSON.parse_string(l)), [{"cmd": "update_check"}, {"cmd": "update_install"}], "commands")
+	_say('{"evt":"update","status":"downloading","version":"0.14.0","percent":40}\n{"evt":"quit"}')
+	eq(infos, [{"status": "downloading", "version": "0.14.0", "percent": 40.0}, "quit"], "events")
+	eq(client.update, {"status": "downloading", "version": "0.14.0", "percent": 40.0}, "kept for Settings")
 	_teardown()
 
 
