@@ -1,0 +1,21 @@
+Screen 0: minimum 320 x 200, current 1920 x 1080, maximum 16384 x 16384
+HDMI-1 connected primary 1920x1080+0+0 (0x48) normal (normal left inverted right x axis y axis) 1000mm x 560mm
+  1920x1080 (0x48) 148.500MHz +HSync +VSync *current +preferred
+        h: width  1920 start 2448 end 2492 total 2640 skew    0 clock  56.25KHz
+        v: height 1080 start 1084 end 1089 total 1125           clock  50.00Hz
+  1920x1080 (0x49) 74.250MHz +HSync +VSync
+        h: width  1920 start 2558 end 2602 total 2750 skew    0 clock  27.00KHz
+        v: height 1080 start 1084 end 1089 total 1125           clock  24.00Hz
+  1920x1080i (0x4a) 74.250MHz +HSync +VSync Interlace
+        h: width  1920 start 2448 end 2492 total 2640 skew    0 clock  28.12KHz
+        v: height 1080 start 1084 end 1094 total 1125           clock  50.00Hz
+  1280x720 (0x4b) 74.250MHz +HSync +VSync
+        h: width  1280 start 1390 end 1430 total 1650 skew    0 clock  45.00KHz
+        v: height  720 start  725 end  730 total  750           clock  60.00Hz
+  1280x720 (0x4c) 74.250MHz +HSync +VSync
+        h: width  1280 start 1720 end 1760 total 1980 skew    0 clock  37.50KHz
+        v: height  720 start  725 end  730 total  750           clock  50.00Hz
+  720x576 (0x4d) 27.000MHz -HSync -VSync
+        h: width   720 start  732 end  796 total  864 skew    0 clock  31.25KHz
+        v: height  576 start  581 end  586 total  625           clock  50.00Hz
+DP-1 disconnected (normal left inverted right x axis y axis)

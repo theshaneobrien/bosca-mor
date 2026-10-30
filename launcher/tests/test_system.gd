@@ -71,7 +71,7 @@ func test_parse_verbose() -> void:
 	eq(Display.choose(o, "1920x1080@60"), {"name": "1920x1080", "rate": "60.00", "cea": true, "id": "0x4a"}, "the CEA one, not the first")
 	eq(Display.plan(o, "1920x1080@60"), [], "already on it")
 	eq(Display.plan(o, "1280x720@60"), [["xrandr", "--output", "DP-1", "--mode", "0x55"]], "720p by id, not 59.94")
-	eq(Display.timing(o, "0x4a"), "1920x1080 0x4a 148.50 MHz 2200x1125 60.00 Hz", "for the log")
+	eq(Display.timing(o, "0x4a"), "1920x1080 0x4a 148.50 MHz 2200x1125 +HSync +VSync 60.00 Hz", "for the log")
 	eq(Display.timings(o, "1920x1080@60").size(), 4, "every 1080p timing in the log")
 
 
@@ -86,6 +86,65 @@ func test_right_size_and_rate_but_the_other_timing() -> void:
 	eq(Display.plan(o, "1920x1080@60"), [["xrandr", "--output", "DP-1", "--mode", "0x4a"]], "from 4K too")
 
 
+func test_the_box_keeps_the_cea_sync() -> void:
+	# The box's real list (D101): 0x5b and 0x5c have the same timing, and only
+	# 0x5c (+HSync +VSync) shows a picture. At login it is already on 0x5c.
+	var o := Display.pick_output(Display.parse(_read("xrandr/lg_verbose.txt")))
+	eq(o.current.id, "0x5c", "on the CEA one at login")
+	var sixty: Array = o.modes.filter(func(m): return m.w == 1920 and m.rates == ["60.00"])
+	eq(sixty.map(func(m): return [m.id, m.sync]), [["0x5b", "-HSync -VSync"], ["0x5c", "+HSync +VSync"]], "sync read")
+	eq(Display.choose(o, "1920x1080@60"), {"name": "1920x1080", "rate": "60.00", "cea": true, "id": "0x5c"}, "not the first")
+	eq(Display.plan(o, "1920x1080@60"), [], "left alone at login")
+	eq(Display.plan(o, "1280x720@60"), [["xrandr", "--output", "DP-1", "--mode", "0x69"]], "720p")
+	var bad := _read("xrandr/lg_verbose.txt").replace(" *current", "").replace(
+		"(0x5b) 148.500MHz -HSync -VSync", "(0x5b) 148.500MHz -HSync -VSync *current")
+	o = Display.pick_output(Display.parse(bad))
+	eq(o.current.id, "0x5b", "on the one that shows nothing")
+	eq(Display.plan(o, "1920x1080@60"), [["xrandr", "--output", "DP-1", "--mode", "0x5c"]], "moved to the CEA one")
+	o = Display.pick_output(Display.parse(_read("xrandr/lg_verbose_uhd.txt")))
+	eq(o.current.id, "0x47", "4K after Automatic")
+	eq(Display.plan(o, "1920x1080@60"), [["xrandr", "--output", "DP-1", "--mode", "0x5c"]], "from 4K")
+	eq(Display.timing(o, "0x5b"), "1920x1080 0x5b 148.50 MHz 2200x1125 -HSync -VSync 60.00 Hz", "sync in the log")
+
+
+func test_the_wrong_sync_loses_to_the_nearest_rate() -> void:
+	# Without the CEA one, 59.94 Hz with the CEA sync beats 60.00 with the
+	# other sync.
+	var text := _read("xrandr/lg_verbose.txt").replace("(0x5c) 148.500MHz +HSync +VSync *current", "(0x5c) 148.500MHz +HSync -VSync")
+	var o := Display.pick_output(Display.parse(text))
+	eq(Display.choose(o, "1920x1080@60").get("id"), "0x5e", "59.94 Hz, +HSync +VSync")
+
+
+func test_same_timing_under_another_id_is_left_alone() -> void:
+	# A copy of the CEA timing (made with --newmode on an earlier login, say)
+	# is the same picture: setting the other id would only blank the TV.
+	var copy := "  1920x1080_60 (0x80) 148.500MHz +HSync +VSync *current\n" \
+		+ "        h: width  1920 start 2008 end 2052 total 2200 skew    0 clock  67.50KHz\n" \
+		+ "        v: height 1080 start 1084 end 1089 total 1125           clock  60.00Hz\n"
+	var text := _read("xrandr/lg_verbose.txt").replace(" *current", "").replace("HDMI-1 disconnected", copy + "HDMI-1 disconnected")
+	var o := Display.pick_output(Display.parse(text))
+	eq(o.current.id, "0x80", "on the copy")
+	eq(Display.plan(o, "1920x1080@60"), [], "left alone")
+
+
+func test_a_tv_without_60_hz_uses_its_own_rate() -> void:
+	# A 1080p TV that lists 50 Hz but not 60: its own 50 Hz, not a made-up
+	# 60 Hz mode it may not show (D101). 24 Hz is too slow to count.
+	var o := Display.pick_output(Display.parse(_read("xrandr/tv_1080p50.txt")))
+	eq(o.name, "HDMI-1", "the TV")
+	eq(Display.choose(o, "1920x1080@60"), {"name": "1920x1080", "rate": "50.00", "cea": false, "id": "0x48"}, "50 Hz")
+	eq(Display.plan(o, "1920x1080@60"), [], "already on it")
+	eq(Display.plan(o, "1280x720@60"), [["xrandr", "--output", "HDMI-1", "--mode", "0x4b"]], "720p at 60, not 50")
+	var on_720 := _read("xrandr/tv_1080p50.txt").replace(" *current +preferred", " +preferred").replace(
+		"(0x4b) 74.250MHz +HSync +VSync", "(0x4b) 74.250MHz +HSync +VSync *current")
+	o = Display.pick_output(Display.parse(on_720))
+	eq(Display.plan(o, "1920x1080@60"), [["xrandr", "--output", "HDMI-1", "--mode", "0x48"]], "back to 1080p50")
+	var slow := _read("xrandr/tv_1080p50.txt").replace("(0x48) 148.500MHz", "(0x48) 74.250MHz").replace(
+		"total 1125           clock  50.00Hz", "total 1125           clock  25.00Hz")
+	o = Display.pick_output(Display.parse(slow))
+	eq(Display.choose(o, "1920x1080@60"), {}, "1080p only at 25 and 24 Hz: none")
+
+
 func test_ensure_logs_what_it_saw() -> void:
 	var f := FakeRun.new()
 	f.set_out("xrandr --verbose", FIX + "xrandr/box_verbose_rb.txt")
@@ -93,7 +152,7 @@ func test_ensure_logs_what_it_saw() -> void:
 	check(not Display.ensure("1920x1080@60", f.call_it, false).changed, "coming back: left alone")
 	var r := Display.ensure("1920x1080@60", f.call_it, true)
 	check(r.ok and r.changed, "changed")
-	eq(r.was, "1920x1080 0x50 133.32 MHz 2000x1111 60.00 Hz", "what it was on")
+	eq(r.was, "1920x1080 0x50 133.32 MHz 2000x1111 +HSync -VSync 60.00 Hz", "what it was on")
 	eq(r.steps, [["xrandr", "--output", "DP-1", "--mode", "0x4a"]], "what it ran")
 	check(r.modes.size() == 4, "the list it chose from")
 

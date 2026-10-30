@@ -51,7 +51,7 @@ tools/
   boot-splash.sh     optional Plymouth splash with Chief's picture (never committed)
   build-godot-template.sh, godot-template/   the patched Godot export template (D100)
   linux-dev-setup.sh Godot editor and SCons for a Linux dev machine, no root
-docs/                SPEC.md, DECISIONS.md (D14 to D100), PROMPTS.md (history), design/ (reference screens)
+docs/                SPEC.md, DECISIONS.md (D14 to D101), PROMPTS.md (history), design/ (reference screens)
 RUNBOOK.md           status, pending on box, deferred, blocked, releasing
 ```
 
