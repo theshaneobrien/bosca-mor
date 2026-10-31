@@ -329,6 +329,32 @@ class TestInstaller(Scratch):
         self.assertEqual(self.logged(), [], "no sudo, and no systemctl restart of the daemon running the update")
         self.assertTrue(self.read(self.sys_path("/opt/boscamor/boscamor-input.py")).endswith("# a new daemon\n"))
 
+    def test_x_starts_the_tv_at_1080p60(self):
+        # Fifth box report, 31 Oct: X started the LG at its own 4K and restarts
+        # came up with no signal; X now starts on the CEA 1080p60 timing (D105).
+        out = self.install("--no-apps")
+        conf = self.sys_path("/etc/X11/xorg.conf.d/90-boscamor.conf")
+        self.assertEqual(self.read(conf), self.read(os.path.join(REPO, "install/files/xorg-boscamor.conf")))
+        self.assertIn("6. X starts the TV at 1920 x 1080 at 60 Hz", out)
+        for output in ("DP-1", "DP-2", "DP-3", "HDMI-1", "HDMI-2"):
+            self.assertIn('Identifier "%s"' % output, self.read(conf))
+        self.assertIn("ok      %s" % conf, self.install("--no-apps"))
+        os.remove(conf)
+        p = self.run_script("install/install.sh", "--update")
+        self.assertEqual(p.returncode, 3, p.stdout + p.stderr)
+        self.assertIn("needs sudo: install -D -m 0644", p.stdout)
+        self.assertIn("xorg.conf.d/90-boscamor.conf", p.stdout)
+        self.assertFalse(os.path.exists(conf), "an update writes no system file")
+
+    def test_cinnamons_saved_screen_layout_is_moved_aside(self):
+        layout = os.path.join(self.home, ".config/cinnamon-monitors.xml")
+        self.write(layout, "<monitors version=\"2\"><!-- the LG at 3840x2160 --></monitors>\n")
+        out = self.install("--no-apps")
+        self.assertIn("move %s aside" % layout, out)
+        self.assertFalse(os.path.exists(layout))
+        self.assertIn("the LG at 3840x2160", self.read(layout + ".old"))
+        self.assertIn("ok      none saved", self.install("--no-apps"))
+
     def test_the_launcher_icon_is_installed_for_the_menu_and_taskbar(self):
         self.install()
         icons = os.path.join(self.home, ".local/share/icons/hicolor")

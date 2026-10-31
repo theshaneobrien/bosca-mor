@@ -145,6 +145,49 @@ func test_a_tv_without_60_hz_uses_its_own_rate() -> void:
 	eq(Display.choose(o, "1920x1080@60"), {}, "1080p only at 25 and 24 Hz: none")
 
 
+## The list as X shows it once the installer's xorg.conf.d file is in (D105):
+## the start mode first, current, and marked preferred with the TV's own.
+static func _started(text: String, output: String) -> String:
+	var start := "  %s (0x1e1) 148.500MHz +HSync +VSync *current +preferred\n" % Display.START_MODE \
+		+ "        h: width  1920 start 2008 end 2052 total 2200 skew    0 clock  67.50KHz\n" \
+		+ "        v: height 1080 start 1084 end 1089 total 1125           clock  60.00Hz"
+	var lines := text.replace(" *current", "").split("\n")
+	for i in lines.size():
+		if lines[i].begins_with(output + " connected"):
+			lines.insert(i + 1, start)
+			break
+	return "\n".join(lines)
+
+
+func test_x_starts_on_the_start_mode() -> void:
+	# Fifth box report, 31 Oct: X started the LG at its own 4K, and restarts
+	# came up with no signal (FIFO underruns at 4K). Now X starts on the CEA
+	# 1080p60 timing under our name, and the launcher has nothing to do (D105).
+	var o := Display.pick_output(Display.parse(_started(_read("xrandr/lg_verbose.txt"), "DP-1")))
+	eq(o.current.id, "0x1e1", "X started on it")
+	eq(o.modes[0].name, Display.START_MODE, "listed first")
+	check(o.modes[0].preferred, "marked preferred")
+	eq(Display.choose(o, "1920x1080@60").get("id"), "0x5c", "the TV's own CEA mode, not ours")
+	eq(Display.plan(o, "1920x1080@60"), [], "the same timing: nothing to do at login")
+	eq(Display.plan(o, "1920x1080@60", false), [], "nor on the way back from an app")
+	eq(Display.plan(o, "1280x720@60"), [["xrandr", "--output", "DP-1", "--mode", "0x69"]], "720p")
+	eq(Display.plan(o, "auto"), [["xrandr", "--output", "DP-1", "--mode", "0x47"]], "Automatic: the TV's own 4K, past ours")
+	o = Display.pick_output(Display.parse(_read("xrandr/lg_verbose_uhd.txt")))
+	eq(Display.plan(o, "auto"), [], "Automatic, already on the TV's own")
+	o = Display.pick_output(Display.parse(_read("xrandr/lg_verbose.txt")))
+	eq(Display.plan(o, "auto"), [["xrandr", "--output", "DP-1", "--mode", "0x47"]], "Automatic from 1080p")
+
+
+func test_a_tv_without_60_hz_moves_off_the_start_mode() -> void:
+	# The start mode is 60 Hz whatever the TV: one that lists 1080p only at
+	# 50 Hz still gets its own (D101).
+	var o := Display.pick_output(Display.parse(_started(_read("xrandr/tv_1080p50.txt"), "HDMI-1")))
+	eq(o.current.id, "0x1e1", "X started on it")
+	eq(Display.choose(o, "1920x1080@60").get("id"), "0x48", "its own 50 Hz, not our 60")
+	eq(Display.plan(o, "1920x1080@60"), [["xrandr", "--output", "HDMI-1", "--mode", "0x48"]], "moved")
+	eq(Display.plan(o, "auto"), [["xrandr", "--output", "HDMI-1", "--mode", "0x48"]], "Automatic: its own preferred")
+
+
 func test_ensure_logs_what_it_saw() -> void:
 	var f := FakeRun.new()
 	f.set_out("xrandr --verbose", FIX + "xrandr/box_verbose_rb.txt")
@@ -295,13 +338,18 @@ func test_login_checks_and_volume_once() -> void:
 	s.free()
 
 
-func test_auto_leaves_the_picture_alone() -> void:
+func test_auto_keeps_the_tvs_own_mode() -> void:
+	# Automatic is the TV's own preferred mode, at login too: X now starts on
+	# the start mode (D105), so the check may have to move it there.
 	var f := FakeRun.new()
+	f.set_out("xrandr --verbose", FIX + "xrandr/lg_verbose_uhd.txt")
 	var s := _setup_node(f)
 	s.configure({"display_mode": "auto", "sound_output": "auto", "volume": 100})
 	s.check(true)
-	for c in f.calls:
-		check(c[0] != "xrandr", "no xrandr: %s" % [c])
+	eq(f.calls.filter(func(c): return c[0] == "xrandr" and c[1] == "--output"), [], "on the TV's own 4K: left alone")
+	f.replies["xrandr --verbose"] = {"code": 0, "out": _started(_read("xrandr/lg_verbose_uhd.txt"), "DP-1")}
+	s.check(true)
+	check(f.ran(["xrandr", "--output", "DP-1", "--mode", "0x47"]), "from the start mode to the TV's own")
 	s.free()
 
 

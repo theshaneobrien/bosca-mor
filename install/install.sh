@@ -221,6 +221,17 @@ cinnamon() {
 		fi
 	fi
 
+	# Cinnamon puts a saved layout back at every login and replug: on the box
+	# that was the LG at 4K, which the launcher then had to undo (D105).
+	step "5. Cinnamon's saved screen layout (the launcher's Picture setting sets the screen)"
+	local layout="$HOME_DIR/.config/cinnamon-monitors.xml"
+	if [ -f "$layout" ]; then
+		todo "move $layout aside to $layout.old"
+		run mv -f "$layout" "$layout.old"
+	else
+		ok "none saved"
+	fi
+
 	step "5. Cinnamon key bindings on Home, Back, Menu, Super+Home or Power"
 	if ! have gsettings; then warn "no gsettings: check the media keys by hand"; return; fi
 	local schema key value cleared found=0 schemas=0
@@ -312,6 +323,13 @@ PY
 		[ -n "$line" ] || continue
 		warn "$conf sets $line, and it wins over 90-boscamor.conf: remove that line or fix its value"
 	done <<< "$found"
+}
+
+# 6. X starts the TV at 1920 x 1080 at 60 Hz, not at its own 4K (D105) ----------------------
+
+x_start_mode() {
+	step "6. X starts the TV at 1920 x 1080 at 60 Hz (takes effect at the next restart)"
+	put_file "$SYS/etc/X11/xorg.conf.d/90-boscamor.conf" 0644 "$(cat "$FILES/xorg-boscamor.conf")" root
 }
 
 # 7. The launcher's own files ------------------------------------------------------------
@@ -556,6 +574,7 @@ main() {
 	logind
 	cinnamon
 	lightdm
+	x_start_mode
 	files
 	remote_help
 	apps

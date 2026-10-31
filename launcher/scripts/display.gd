@@ -29,13 +29,18 @@ const CEA_SYNC := "+HSync +VSync"
 const INTERNAL := ["eDP", "LVDS", "DSI"]
 const RATE_MATCH := 0.5          # Hz: 59.94 and 60.00 both count as 60
 const MIN_RATE := 50.0           # Hz: a TV without the rate asked for may use its own down to this (D101)
+## The mode X starts the TV on, from the installer's xorg.conf.d file (D105):
+## the CEA 1080p60 timing under its own name, so a 4K TV never runs at 4K
+## while the desktop starts. It isn't one of the TV's own modes, so the
+## choices here look past it.
+const START_MODE := "1920x1080_start"
 
 
 ## xrandr --query, --current or --verbose as a list of outputs:
 ## [{name, connected, primary, current: {w, h, hz, id?} or {}, modes: [mode]}]
 ## A mode is {name, w, h, rates} where rates are the strings xrandr printed
 ## ("60.00"). From --verbose each mode is one timing, and also has id, mhz,
-## htotal, vtotal, sync ("+HSync +VSync") and current.
+## htotal, vtotal, sync ("+HSync +VSync"), current and preferred.
 static func parse(text: String) -> Array:
 	var size_re := RegEx.create_from_string("^(\\d+)x(\\d+)(i?)")
 	var verbose_re := RegEx.create_from_string("^\\s+(\\S+)\\s+\\((0x[0-9a-fA-F]+)\\)\\s+([\\d.]+)MHz(.*)$")
@@ -71,7 +76,8 @@ static func parse(text: String) -> Array:
 			var sync := " ".join(syncs)
 			last = {"name": vm.get_string(1), "id": vm.get_string(2), "mhz": vm.get_string(3).to_float(),
 				"w": sm.get_string(1).to_int(), "h": sm.get_string(2).to_int(), "rates": [],
-				"htotal": 0, "vtotal": 0, "sync": sync, "current": flags.has("*current")}
+				"htotal": 0, "vtotal": 0, "sync": sync, "current": flags.has("*current"),
+				"preferred": flags.has("+preferred")}
 			cur.modes.append(last)
 			continue
 		var tm := total_re.search(line)
@@ -150,7 +156,8 @@ static func is_mode(current: Dictionary, mode: String) -> bool:
 ## The mode in the TV's list to use for mode, best first: from --verbose the
 ## CEA timing (clock, totals and sync); then the nearest rate within
 ## RATE_MATCH, CEA sync first; then, for a TV that doesn't list that rate,
-## its nearest lower one down to MIN_RATE, CEA sync first (D101).
+## its nearest lower one down to MIN_RATE, CEA sync first (D101). Never the
+## start mode, which is ours, not the TV's (D105).
 ## {name, rate, cea, id (--verbose)}, or {} if the list has none.
 static func choose(out: Dictionary, mode: String) -> Dictionary:
 	var m := split(mode)
@@ -158,7 +165,7 @@ static func choose(out: Dictionary, mode: String) -> Dictionary:
 	var best := {}
 	var best_rank := INF
 	for entry in out.modes:
-		if entry.w != m.w or entry.h != m.h:
+		if entry.w != m.w or entry.h != m.h or entry.name == START_MODE:
 			continue
 		var sync_ok: bool = entry.get("sync", "") in ["", CEA_SYNC]   # "" when xrandr didn't say
 		var is_cea: bool = entry.has("id") and cea.size() == 3 and absf(entry.mhz - cea[0]) < 0.01 \
@@ -186,15 +193,15 @@ static func choose(out: Dictionary, mode: String) -> Dictionary:
 
 
 ## The xrandr commands that put the output on mode, or [] if it already is.
-## "auto" hands it back to the TV's preferred mode. strict: the current mode
-## counts only if it is the chosen timing itself (login and Settings);
+## "auto" is the TV's own preferred mode (auto_plan). strict: the current
+## mode counts only if it is the chosen timing itself (login and Settings);
 ## otherwise any timing of that size and rate will do, so a picture that
 ## works after a replug is left alone (D83). A current mode with the chosen
 ## one's exact timing and sync is never set again (D101).
 static func plan(out: Dictionary, mode: String, strict := true) -> Array:
 	var o: String = out.name
 	if mode == "auto":
-		return [["xrandr", "--output", o, "--auto"]]
+		return auto_plan(out)
 	if not strict and is_mode(out.current, mode):
 		return []
 	var best := choose(out, mode)
@@ -212,6 +219,21 @@ static func plan(out: Dictionary, mode: String, strict := true) -> Array:
 	return [["xrandr", "--newmode", mode_name] + CEA[mode],
 		["xrandr", "--addmode", o, mode_name],
 		["xrandr", "--output", o, "--mode", mode_name]]
+
+
+## Automatic: the TV's own preferred mode. X marks the start mode preferred
+## too (D105), so from --verbose it is the first +preferred mode past that,
+## and [] when the TV is on it or has none. Without --verbose, xrandr --auto.
+static func auto_plan(out: Dictionary) -> Array:
+	var o: String = out.name
+	if not out.modes.any(func(m): return m.has("id")):
+		return [["xrandr", "--output", o, "--auto"]]
+	for m in out.modes:
+		if m.get("preferred", false) and m.name != START_MODE:
+			if _same_timing(out, out.current.get("id", ""), m.id):
+				return []
+			return [["xrandr", "--output", o, "--mode", m.id]]
+	return []
 
 
 ## Puts the TV on mode, falling back to 1280 x 720 if 1920 x 1080 fails.

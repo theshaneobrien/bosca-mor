@@ -200,8 +200,8 @@ func _work(job: Dictionary) -> Dictionary:
 			out.wifi_join = Network.join(job.ssid, job.password, job.known, run)
 			out.wifi = Network.scan(run)
 		"check":
-			if job.display_mode != "auto":
-				out.display = Display.ensure(job.display_mode, run, job.probe)
+			# Automatic too: X starts on the start mode, not the TV's own (D105).
+			out.display = Display.ensure(job.display_mode, run, job.probe)
 			if job.sound_output != "auto" or job.get("set_volume", false):
 				out.sound = Sound.ensure(job.sound_output, job.volume if job.get("set_volume", false) else -1, run)
 	return out
