@@ -158,6 +158,35 @@ What the first box report confirmed: Mint 22.3, X11, Python 3.12, 1920x1080 at 6
 - [ ] Leave the next one ready and don't touch anything for 10 minutes on Home: it installs by itself the same way.
 - [ ] `ls /opt/boscamor/previous/` holds the version before.
 
+**The remote's Back and OK, 31 Oct 2026 (v0.14.5).** Chief, 31 Oct: Back works differently with the air mouse on and off, which confuses people in YouTube and Plex. From the key captures: with the air mouse on, Back is a right click (`BTN_RIGHT`, scancode 0x90002, on the remote's mouse interface); with it off, it is `KEY_BACK` on its keyboard interface (scancode not recorded; most likely 0xc0224, AC Back, beside Home's 0xc0223). VacuumTube turns a right click into Back, and YouTube's TV interface takes Esc, Backspace and F4 as Back, not `KEY_BACK` (its author's list, VacuumTube issue 151). Plex HTPC takes `KEY_BACK`, Esc and Backspace, not a right click. And with the air mouse off, OK is `KEY_SELECT` (0xc0041), which X can't pass on (D82), so OK does nothing inside apps. A udev hwdb file can change what these buttons send in the kernel, before X and the apps see them. Try it by hand before the installer does it (sudo, no restart):
+
+```bash
+sudo tee /etc/udev/hwdb.d/90-boscamor-remote.hwdb >/dev/null <<'EOF'
+# G20S remote: Back is Esc and OK is Enter, with the air mouse on or off
+evdev:name:HAOBO Technology USB Composite Device Keyboard:*
+ KEYBOARD_KEY_c0224=esc
+ KEYBOARD_KEY_c0041=enter
+
+evdev:name:HAOBO Technology USB Composite Device:*
+ KEYBOARD_KEY_90002=esc
+
+id-input:modalias:input:b0003v4842p0001*
+ ID_INPUT_KEY=1
+EOF
+sudo systemd-hwdb update
+```
+
+Then unplug the remote's USB dongle, wait a few seconds and plug it back in. To undo: `sudo rm /etc/udev/hwdb.d/90-boscamor-remote.hwdb && sudo systemd-hwdb update`, then replug the dongle.
+
+- [ ] YouTube, air mouse on and off: Back goes back one step, the same way in both.
+- [ ] Plex, air mouse on and off: the same. Holding Back may close Plex (Plex's own long press on Esc).
+- [ ] With the air mouse off, OK selects in YouTube and Plex.
+- [ ] Home: Back opens and closes the sidebar; with the air mouse on, OK still clicks.
+- [ ] If Back does nothing with the air mouse on: `udevadm info /dev/input/by-id/*HAOBO*event-mouse | grep ID_INPUT` and a `tools/box-report.sh`.
+- [ ] If Back with the air mouse off still differs: `tools/box-report.sh --keys` with the air mouse off, for its scancode.
+
+Netflix, Prime Video and the Browser run in Firefox, where Esc doesn't go back a page (Back with the air mouse off does today; a right click doesn't). If those matter more, `backspace` in place of the three `esc` also works in YouTube and Plex, and Firefox goes back on it with `browser.backspace_action` set to 0 in our profiles, but in a search box Backspace deletes a letter instead.
+
 **Update hand-over, 31 Oct 2026 (v0.14.2).** Chief, 31 Oct: Update on v0.14.1 showed "Updating" for a long time, then "Couldn't install the update". The old launcher starts the new one, and it started `/opt/boscamor/boscamor (deleted)`, which isn't a file (D104). The install itself most likely went in. The launcher on screen does the hand-over, so 0.14.1 and older can't: install v0.14.2 by hand once. To check:
 
 - [x] Install v0.14.2 by hand (its "Update the box" commands) and reboot: Settings > About shows Version 0.14.2.
