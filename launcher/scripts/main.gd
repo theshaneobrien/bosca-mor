@@ -23,6 +23,8 @@ const Display := preload("res://scripts/display.gd")
 const SystemInfo := preload("res://scripts/system_info.gd")
 
 const OFF_TEXT := {"poweroff": "Shutting down", "restart": "Restarting", "update": "Updating"}
+## The update is in but the new launcher didn't take over (D104).
+const RESTART_WORDS := "Restart to finish the update"
 
 ## Passed to Home; empty reads the user's files.
 @export var apps_path := ""
@@ -78,6 +80,8 @@ var _hover_from := Vector2.ZERO
 var _update_timer: Timer
 var _idle_timer: Timer
 var _restarting := false           # the new launcher has been started; waiting to be told to quit
+var _new_pid := 0                  # that new launcher, while waiting (D104)
+var _new_timer: Timer              # checks it still runs every UPDATE_CHILD_CHECK
 ## How often the launcher started its new self, and was told to quit (tests:
 ## headless does neither).
 var restart_requests := 0
@@ -114,6 +118,10 @@ func _ready() -> void:
 		if _updating():
 			_update_failed())
 	add_child(_update_timer)
+	_new_timer = Timer.new()
+	_new_timer.wait_time = Tokens.UPDATE_CHILD_CHECK
+	_new_timer.timeout.connect(_check_new_launcher)
+	add_child(_new_timer)
 	_idle_timer = Timer.new()
 	_idle_timer.one_shot = true
 	_idle_timer.timeout.connect(_on_idle)
@@ -672,19 +680,51 @@ func _restart(version: String) -> void:
 		state.start_update()
 	_update_timer.start(Tokens.UPDATE_WAIT)
 	restart_requests += 1
-	print("update: starting the new launcher, %s" % version)
 	if DisplayServer.get_name() == "headless":
 		return
-	if OS.create_process(OS.get_executable_path(), OS.get_cmdline_args()) <= 0:
-		push_warning("update: could not start the new launcher")
+	if _new_pid > 0 and OS.is_process_running(_new_pid):
+		return                         # asked again after a reconnect: it is already starting
+	var exe := new_launcher_path(OS.get_executable_path())
+	print("update: starting the new launcher, %s, from %s" % [version, exe])
+	_new_pid = OS.create_process(exe, OS.get_cmdline_args()) if FileAccess.file_exists(exe) else -1
+	if _new_pid <= 0:
+		push_warning("update: could not start the new launcher at %s" % exe)
+		_update_failed()
+		return
+	_new_timer.start()
+
+
+## The file to start as the new launcher. Linux names a running program by
+## /proc/self/exe, which ends in " (deleted)" once the installer has put a
+## new file in its place (D104).
+static func new_launcher_path(exe: String) -> String:
+	return exe.trim_suffix(" (deleted)")
+
+
+# The new launcher ended before the daemon said it was up: it won't be now.
+func _check_new_launcher() -> void:
+	if not _restarting:
+		_new_timer.stop()
+	elif not OS.is_process_running(_new_pid):
+		push_warning("update: the new launcher ended before it was up")
 		_update_failed()
 
 
+## Back to Home. Once the daemon has asked for the restart the new files are
+## in, and a restart of the box starts them (D104).
 func _update_failed() -> void:
+	var installed := _restarting
 	_update_timer.stop()
+	_new_timer.stop()
+	_new_pid = 0
 	_restarting = false
 	state.show_home()
-	toast.push("Couldn't install the update")
+	if installed:
+		toast.push(RESTART_WORDS)
+		settings.update_info = {"status": "failed", "error": RESTART_WORDS}
+		settings.refresh()
+	else:
+		toast.push("Couldn't install the update")
 
 
 func _quit() -> void:

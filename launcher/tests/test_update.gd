@@ -9,6 +9,7 @@ const Apps := preload("res://scripts/apps.gd")
 const State := preload("res://scripts/state.gd")
 const InputModeScript := preload("res://scripts/input_mode.gd")
 const SettingsView := preload("res://scripts/settings.gd")
+const MainScript := preload("res://scripts/main.gd")
 const S := State.Screen
 
 var main: Control
@@ -158,6 +159,44 @@ func test_restart_asked_of_a_launcher_not_on_updating() -> void:
 	eq(main._off_text.text, "Updating", "says so")
 	eq(main.daemon.calls, [], "no install asked for")
 	eq(main.restart_requests, 1, "started the new launcher")
+	_teardown()
+
+
+func test_the_new_launcher_is_started_from_the_file_now_there() -> void:
+	# On Chief's box the old launcher started "/opt/boscamor/boscamor (deleted)"
+	# after the installer had replaced the file, and waited out UPDATE_WAIT (D104).
+	eq(MainScript.new_launcher_path("/opt/boscamor/boscamor (deleted)"), "/opt/boscamor/boscamor", "suffix gone")
+	eq(MainScript.new_launcher_path("/opt/boscamor/boscamor"), "/opt/boscamor/boscamor", "a plain path kept")
+	eq(MainScript.new_launcher_path("/x (deleted)/boscamor"), "/x (deleted)/boscamor", "only at the end")
+
+
+func test_no_answer_after_the_restart_says_restart_the_box() -> void:
+	# The daemon asked for the restart, so the new files are in.
+	await _setup()
+	main.state.start_update()
+	_say({"status": "restart", "version": "0.14.0"})
+	main._update_timer.timeout.emit()
+	eq(main.state.screen, S.HOME, "back to Home")
+	eq(main.toast.text, "Restart to finish the update", "toast")
+	eq(SettingsView.update_words(main.settings.update_info), "Restart to finish the update", "Settings says so too")
+	check(not main.toast.text.contains("—"), "no em-dash")
+	_teardown()
+
+
+func test_a_new_launcher_that_ends_is_noticed_in_seconds() -> void:
+	await _setup()
+	_say({"status": "restart", "version": "0.14.0"})
+	# Headless starts nothing, so stand in a child that ends at once.
+	main._new_pid = OS.create_process(OS.get_executable_path(), ["--headless", "--version"])
+	check(main._new_pid > 0, "started a stand-in")
+	main._new_timer.start()
+	var waited := 0.0
+	while main.state.screen != S.HOME and waited < 10.0:
+		await tree.create_timer(0.1).timeout
+		waited += 0.1
+	eq(main.state.screen, S.HOME, "back to Home well before UPDATE_WAIT")
+	eq(main.toast.text, "Restart to finish the update", "toast")
+	check(main._new_timer.is_stopped(), "stopped checking")
 	_teardown()
 
 

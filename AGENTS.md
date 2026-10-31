@@ -52,7 +52,7 @@ tools/
   update-bundle.sh   build/boscamor.tar.xz, the update each release carries (D103)
   build-godot-template.sh, godot-template/   the patched Godot export template (D100)
   linux-dev-setup.sh Godot editor and SCons for a Linux dev machine, no root
-docs/                SPEC.md, DECISIONS.md (D14 to D103), PROMPTS.md (history), design/ (reference screens)
+docs/                SPEC.md, DECISIONS.md (D14 to D104), PROMPTS.md (history), design/ (reference screens)
 RUNBOOK.md           status, pending on box, deferred, blocked, releasing
 ```
 
@@ -100,3 +100,4 @@ Add one line here only when something cost real time. Keep this file under 120 l
 - The daemon tests need Linux. On Windows run them in WSL: `wsl.exe -d Ubuntu -- bash -lc 'cd /mnt/c/Users/shane/dev/bosca-mor && BOSCAMOR_DRY_RUN=1 BOSCAMOR_GODOT=/mnt/c/Users/shane/Desktop/Godot_v4.7.2-stable_win64_console.exe python3 -m unittest discover -s daemon/tests'`. `BOSCAMOR_GODOT` (any Godot editor) enables the launcher round trip test.
 - On Linux the launcher has no stand-in for a missing daemon: a launch fails at once (D66). Launcher tests that launch apps set `main.daemon.stand_in = true` in their setup.
 - Bash scripts here use `set -o pipefail`: never pipe into `grep -q` (it stops reading, the writer gets SIGPIPE, the pipeline fails); use `grep ... >/dev/null`.
+- On Linux, `OS.get_executable_path()` reads `/proc/self/exe`: once an update has replaced the file it ends in " (deleted)", and `OS.create_process` still returns a pid when the exec fails (D104).

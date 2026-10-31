@@ -217,6 +217,7 @@ const WIFI_CONNECT_TIMEOUT := 45    # and to join one
 # Updates (D103)
 const UPDATE_IDLE := 600.0          # a ready update installs after this long with no key or click, shown and on Home, the sidebar or Settings
 const UPDATE_WAIT := 360.0          # "Updating" gives up and returns Home after this (the daemon allows install.sh 300 s)
+const UPDATE_CHILD_CHECK := 1.0     # D104: while it restarts, how often the old launcher checks the new one still runs
 
 # Toast (D62: no design; built from the dialog, button and menu tokens)
 const TOAST_HEIGHT := BUTTON
