@@ -26,6 +26,8 @@ REAL_HOME="${REAL_HOME:-$HOME}"
 OUT="${BOX_REPORT_DIR:-$REAL_HOME/box-report-$STAMP}"
 REPORT="$OUT/report.txt"
 have() { command -v "$1" >/dev/null 2>&1; }
+# Over ssh there is no DISPLAY: the TV's screen is :0.
+export DISPLAY="${DISPLAY:-:0}"
 
 MODES=()
 for arg in "$@"; do
@@ -69,8 +71,21 @@ report() {
 	section "Session type (want x11)" printenv XDG_SESSION_TYPE XDG_CURRENT_DESKTOP DISPLAY
 	section "Screen" xrandr --current
 	section "Screen, every timing (xrandr --verbose)" xrandr --verbose
-	section "Kernel display messages, this boot" sh -c 'journalctl -k -b 0 --no-pager -o short-monotonic | grep -i -E "i915|drm|hdmi|dp-|link" | tail -n 80'
-	section "Kernel display messages, last boot" sh -c 'journalctl -k -b -1 --no-pager -o short-monotonic | grep -i -E "i915|drm|hdmi|dp-|link" | tail -n 80'
+	# What set the picture at the last few logins: the kernel, X, Cinnamon's
+	# saved layout or the launcher (its picture: lines are further down).
+	section "Boots (0 is this one)" sh -c 'journalctl --list-boots --no-pager | tail -n 6'
+	for b in 0 -1 -2 -3; do
+		section "Kernel display messages, boot $b" sh -c 'journalctl -k -b "$1" --no-pager -o short-monotonic | grep -i -E "i915|drm|hdmi|dp-|link" | tail -n 80' sh "$b"
+	done
+	for f in /var/log/Xorg.0.log /var/log/Xorg.0.log.old "$REAL_HOME/.local/share/xorg/Xorg.0.log" "$REAL_HOME/.local/share/xorg/Xorg.0.log.old"; do
+		[ -f "$f" ] || continue
+		section "X's log: outputs and the mode it started on ($f, $(date -r "$f" '+%F %T'))" \
+			sh -c 'grep -i -E "output|initial mode|EDID|monitor name|preferred|hotplug|link" "$1" | head -n 100' sh "$f"
+	done
+	section "Cinnamon's saved monitor layout (applied at login and after a replug)" \
+		sh -c 'ls -la "$1"/cinnamon-monitors.xml "$1"/monitors.xml; cat "$1"/cinnamon-monitors.xml "$1"/monitors.xml' sh "$REAL_HOME/.config"
+	section "Session log, display lines (~/.xsession-errors)" \
+		sh -c 'grep -a -H -i -E "xrandr|randr|monitor|picture:|csd-|output" "$1/.xsession-errors" "$1/.xsession-errors.old" | tail -n 80' sh "$REAL_HOME"
 	section "Python (daemon needs 3)" python3 --version
 
 	echo "  tools the launcher uses"
@@ -131,7 +146,7 @@ report() {
 	section "Sound outputs" pactl list short sinks
 	# Godot's own log: user://logs, kept for the last few logins.
 	section "Launcher logs" ls -la "$REAL_HOME/.local/share/godot/app_userdata/Launcher/logs"
-	section "Launcher picture, sound and Wi-Fi lines, by login" sh -c 'cd "$1" && grep -H -E "^(picture|sound|wifi): " $(ls -tr godot*.log) | tail -n 80' sh "$REAL_HOME/.local/share/godot/app_userdata/Launcher/logs"
+	section "Launcher picture, sound and Wi-Fi lines, by login" sh -c 'cd "$1" && grep -a -H -E "^(picture|sound|wifi|update): " $(ls -tr godot*.log) | tail -n 160' sh "$REAL_HOME/.local/share/godot/app_userdata/Launcher/logs"
 	section "Launcher log, this login" tail -n 120 "$REAL_HOME/.local/share/godot/app_userdata/Launcher/logs/godot.log"
 	section "Hostname" cat /etc/hostname
 
