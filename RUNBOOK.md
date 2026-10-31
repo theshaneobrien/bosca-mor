@@ -174,7 +174,7 @@ Chief, 31 Oct, with v0.14.4's X file: no signal at every start. A replug brought
 
 - [ ] Over SSH, `sudo rm /etc/X11/xorg.conf.d/90-boscamor.conf` and restart (or run the v0.14.5 installer by hand, which removes it). The box behaves as it did on the morning of 31 Oct again: the launcher works after a replug.
 - [ ] If the session still freezes after that, put Cinnamon's saved layout back, `mv ~/.config/cinnamon-monitors.xml.old ~/.config/cinnamon-monitors.xml`, and restart.
-- [ ] Then, without restarting again, `tools/box-report.sh` over SSH and send the `.tar.gz`: its "boot -1" to "boot -3" sections, `Xorg.0.log.old` and `.xsession-errors.old` are the boots with v0.14.4's file. Say which starts were cold.
+- [x] Then, without restarting again, `tools/box-report.sh` over SSH and send the `.tar.gz`: its "boot -1" to "boot -3" sections, `Xorg.0.log.old` and `.xsession-errors.old` are the boots with v0.14.4's file. Say which starts were cold. Chief, 31 Oct 13:19.
 
 **Remote help, 30 Oct 2026.** The box runs Tailscale 1.104.4, starts it at boot, and reaches the Plex server over it (direct, on the home network). No SSH server, Tailscale SSH off, no VNC before this. After `git pull` and the installer:
 
@@ -297,7 +297,7 @@ Chief, 31 Oct, with v0.14.4's X file: no signal at every start. A replug brought
 
 ## Blocked
 
-**Boot picture through the active DP to HDMI adapter (31 Oct 2026).** After a restart the LG often shows no signal until the adapter is replugged; a cold boot usually works. Tried: the launcher setting the mode itself at login (D79), by exact timing (D83) and sync (D101), all after X and Cinnamon have started the TV at its own 4K; then X starting at 1080p itself (D105), which made every start fail and froze the session after a replug, so it was taken out (D106). What is known: X and Cinnamon start the LG at 3840x2160 at 60 Hz; on failed restarts the kernel logs i915 `CPU pipe A FIFO underrun`; the cold boot of 31 Oct had none. Next: read the box report from v0.14.4's starts (kernel, X and session logs) before changing anything else. Not tried yet, and each needs the box: the kernel's own boot mode (`video=` on the kernel line, so no mode change happens at all), i915 options such as `enable_fbc=0` or `enable_dc=0` against the underruns, a passive cable or another adapter. The box's next TV is 1080p, where X starts at 1080p anyway.
+**Boot picture through the active DP to HDMI adapter (31 Oct 2026).** After a restart the LG often shows no signal until the adapter is replugged; the one cold boot seen worked. Tried: the launcher setting the mode itself at login (D79), by exact timing (D83) and sync (D101); then X starting at 1080p itself (D105), which made every start fail and froze Cinnamon after a replug, so it was taken out (D106). What is known (box reports of 31 Oct, 11:29 and 13:19): every start with no signal has an i915 `CPU pipe A FIFO underrun`, at 4K or at 1080p, at or soon after the first mode set, including starts where the launcher changed nothing; the cold boot had none. So it is the GPU after a restart plus an adapter that doesn't recover, not the mode and not the launcher, and a 1080p TV on the same adapter may do the same. Next, each on the box and Chief's choice (Pending on box): a software off and on of the output when there is no signal (if that brings the picture back like a replug, the box can do it itself), a passive DP++ cable, or kernel settings against the underruns (`intel_idle.max_cstate=2`, `i915.enable_dc=0`). Change nothing in the launcher for this before one of those has a result.
 
 ## Dev-machine numbers (not the box)
 
@@ -315,3 +315,10 @@ No redraws while idle and 10 wakeups a second while hidden, as designed. The CPU
 ```bash
 BOX=user@host tools/deploy.sh
 ```
+
+
+What it showed: the i915 `CPU pipe A FIFO underrun` came on every start that showed no signal, whatever the mode. With v0.14.4's file X started the TV at 1080p (`using initial mode 1920x1080_start`), the launcher ran no xrandr at all, and the first underrun came 0.14 s after X set that mode (11.66 s, 11.80 s). The only start with no underrun was the cold boot at 10:14, which worked. So the mode isn't the cause, and neither is the launcher. The frozen desktop was Cinnamon: after the replug it logged `meta_monitor_derive_current_mode: runtime check failed (is_current_mode_known)`, as the start mode and the TV's own 0x5c share one size and rate. Next, your call (Blocked):
+
+- [ ] Next time a restart shows no signal, before replugging, over SSH: `DISPLAY=:0 xrandr --output DP-1 --off; sleep 3; DISPLAY=:0 xrandr --output DP-1 --mode 0x5c`. Does the picture come back? If it does, the box can do its own replug.
+- [ ] Or a passive DP to HDMI cable in place of the active adapter, if the Wyse's DP ports take one (DP++): several restarts and a cold boot.
+- [ ] Or a kernel setting against the underruns, one at a time, with several restarts each: `intel_idle.max_cstate=2`, then `i915.enable_dc=0` (GRUB_CMDLINE_LINUX_DEFAULT in /etc/default/grub, `sudo update-grub`, restart; take it out the same way).
