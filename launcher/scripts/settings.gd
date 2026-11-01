@@ -683,7 +683,8 @@ func _build_items() -> void:
 				_items.append({"type": "app", "app": a})
 		"display":
 			_items.append({"type": "choice", "key": "display_mode", "label": "Picture", "value": Display.describe(prefs.display_mode)})
-			if setup and setup.enabled:
+			# On Automatic nothing is checked, so there is nothing to show (D107).
+			if setup and setup.enabled and prefs.display_mode != "auto":
 				_items.append({"type": "info", "label": "Screen", "value": _screen_now(), "warn": not setup.display.get("ok", true)})
 			_items.append({"type": "choice", "key": "ui_scale", "label": "Screen size", "value": SCALE_NAMES.get(prefs.ui_scale, "100%")})
 			_items.append({"type": "toggle", "key": "reduce_motion", "label": "Reduce motion", "on": prefs.reduce_motion})

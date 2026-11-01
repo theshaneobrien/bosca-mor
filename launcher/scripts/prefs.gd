@@ -8,7 +8,7 @@ const Display := preload("res://scripts/display.gd")
 const Sound := preload("res://scripts/sound.gd")
 
 const DEFAULTS := {"reduce_motion": false, "ui_scale": 1.0, "glyph_style": "auto",
-	"display_mode": "1920x1080@60", "sound_output": "hdmi", "volume": 100}
+	"display_mode": "auto", "sound_output": "hdmi", "volume": 100}   # auto: the desktop sets the picture (D107)
 const UI_SCALES := [1.0, 0.95, 0.9]           # shrink for TVs that overscan (D33)
 const GLYPH_STYLES := ["auto", "xbox", "playstation"]
 

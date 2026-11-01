@@ -266,8 +266,9 @@ func test_sound_auto_only_sets_the_volume() -> void:
 
 # SystemSetup ------------------------------------------------------------------
 
-func _setup_node(f: FakeRun) -> Node:
+func _setup_node(f: FakeRun, mode := "1920x1080@60") -> Node:
 	var s: Node = SystemSetup.new()
+	s.display_mode = mode
 	s.enabled = true
 	s.threaded = false
 	s.run = f.call_it
@@ -431,12 +432,14 @@ var dir: String
 var fake: FakeRun
 
 
-func _start() -> void:
+func _start(saved_mode := "1920x1080@60") -> void:
 	dir = ProjectSettings.globalize_path("user://test-system-%d" % Time.get_ticks_usec())
 	DirAccess.make_dir_recursive_absolute(dir)
 	main = MainScene.instantiate()
 	main.apps_path = "res://tests/fixtures/apps_minimal.json"
 	main.state_path = dir.path_join("state.json")
+	if saved_mode:
+		StateFile.update({"display_mode": saved_mode}, main.state_path)   # chosen once; the default is Automatic (D107)
 	tree.root.add_child(main)
 	main.animate = false
 	main.daemon.stub_delay = -1.0
@@ -498,6 +501,36 @@ func test_picture_change_asks_to_keep() -> void:
 	_end()
 
 
+# D107: a new box leaves the picture to the desktop. Nothing runs xrandr at
+# login or on return, Display has no Screen row, and the Picture row turns
+# the checks on.
+func test_automatic_by_default() -> void:
+	var fresh: Node = SystemSetup.new()
+	eq(fresh.display_mode, "auto", "SystemSetup starts on Automatic")
+	fresh.free()
+	await _start("")
+	eq(main.setup.display_mode, "auto", "nothing saved: Automatic")
+	for c in fake.calls:
+		check(c[0] != "xrandr", "no xrandr at login: %s" % [c])
+	main.setup.check()
+	for c in fake.calls:
+		check(c[0] != "xrandr", "none on return either: %s" % [c])
+	var st: Control = main.settings
+	eq(st._current().key, "display_mode", "Picture row")
+	eq(st._current().value, "Automatic", "Automatic")
+	eq(st._items[1].get("key", ""), "ui_scale", "no Screen row")
+	fake.set_out("xrandr --verbose", FIX + "xrandr/box_verbose_uhd.txt")   # the desktop left it at 4K
+	_act("accept")
+	check(fake.ran(["xrandr", "--output", "DP-1", "--mode", "0x4a"]), "1080p tried")
+	eq(main.state.screen, State.Screen.CONFIRM, "asks to keep it")
+	_act("nav_right")
+	_act("accept")
+	eq(StateFile.load_file(main.state_path).get("display_mode"), "1920x1080@60", "kept and saved")
+	eq(main.setup.display_mode, "1920x1080@60", "checks on")
+	eq(st._items[1].label, "Screen", "Screen row back")
+	_end()
+
+
 func test_picture_cancel_goes_back() -> void:
 	await _start()
 	_act("accept")
@@ -508,7 +541,7 @@ func test_picture_cancel_goes_back() -> void:
 	eq(main.state.screen, State.Screen.SETTINGS, "back in Settings")
 	check(fake.ran(["xrandr", "--output", "DP-1", "--mode", "0x4a"]), "old picture back")
 	eq(main.setup.display_mode, "1920x1080@60", "checks hold the old one")
-	eq(StateFile.load_file(main.state_path).get("display_mode", "unset"), "unset", "nothing saved")
+	eq(StateFile.load_file(main.state_path).get("display_mode"), "1920x1080@60", "the old one still saved")
 	_end()
 
 

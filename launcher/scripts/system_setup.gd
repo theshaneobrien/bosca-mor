@@ -31,7 +31,7 @@ var enabled := can_run(OS.get_name(), OS.get_environment("DISPLAY"), DisplayServ
 ## Tests run jobs on the calling thread with a fake runner.
 var threaded := true
 var run: Callable = run_command
-var display_mode := "1920x1080@60"
+var display_mode := "auto"                # the desktop sets the picture (D107)
 var sound_output := "hdmi"
 var volume := 100
 ## Latest results, for Settings: Display.ensure and Sound.ensure.
