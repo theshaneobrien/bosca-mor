@@ -52,7 +52,7 @@ tools/
   update-bundle.sh   build/boscamor.tar.xz, the update each release carries (D103)
   build-godot-template.sh, godot-template/   the patched Godot export template (D100)
   linux-dev-setup.sh Godot editor and SCons for a Linux dev machine, no root
-docs/                SPEC.md, DECISIONS.md (D14 to D107), PROMPTS.md (history), design/ (reference screens)
+docs/                SPEC.md, DECISIONS.md (D14 to D108), PROMPTS.md (history), design/ (reference screens)
 RUNBOOK.md           status, pending on box, deferred, blocked, releasing
 ```
 

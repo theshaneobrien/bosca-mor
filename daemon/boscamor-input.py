@@ -2,7 +2,7 @@
 """boscamor-input: the launcher's companion daemon.
 
 Watches the global keys (Home, Guide, Super + Home, Power) while another app
-has focus, starts and ends apps for the launcher, runs confirmed power
+has focus, and keyboard Home or Super alone over a full-screen browser app (D108), starts and ends apps for the launcher, runs confirmed power
 actions, and sends the Desktop notification. Python 3 stdlib only; see
 docs/SPEC.md "Companion daemon".
 
@@ -56,6 +56,9 @@ KEY_OK = 352
 KEY_SELECT = 353
 WATCHED_KEYS = (KEY_HOMEPAGE, BTN_MODE, KEY_POWER, KEY_HOME)
 META_KEYS = (KEY_LEFTMETA, KEY_RIGHTMETA)
+# In an app's argv: a full-screen browser app (Netflix, Prime Video, Browser,
+# added websites), which a keyboard has no other way out of (D108).
+KIOSK_ARG = "--kiosk"
 PRESS = 1  # 0 release, 2 repeat
 
 RESCAN_S = 3.0
@@ -852,11 +855,12 @@ class Updater:
 # The daemon -------------------------------------------------------------------
 
 class App:
-    def __init__(self, app_id, proc, keep_on_home):
+    def __init__(self, app_id, proc, keep_on_home, kiosk=False):
         self.id = app_id
         self.proc = proc
         self.pgid = proc.pid  # start_new_session makes it the group leader
         self.keep_on_home = keep_on_home
+        self.kiosk = kiosk  # a full-screen browser app (D108)
         self.closing = False
         self.deadline = 0.0
         self.killed = False
@@ -905,6 +909,7 @@ class Daemon:
         self.clients = []
         self.devices = {}  # path -> [fd, name, partial bytes]
         self.meta_down = set()
+        self.meta_alone = set()  # devices where Super is down with no other key yet
         self.app = None
         self.pending = None  # (id, argv, keep_on_home) waiting for the old app to end
         self.visible = False
@@ -1281,19 +1286,33 @@ class Daemon:
         if code in META_KEYS:
             if value == PRESS:
                 self.meta_down.add(device)
+                self.meta_alone.add(device)
             elif value == 0:
                 self.meta_down.discard(device)
+                if device in self.meta_alone:
+                    self.meta_alone.discard(device)
+                    if self.in_kiosk():
+                        log.info("super: leaving %s", self.app.id)
+                        self.on_home()
             return
         if value != PRESS:
             return
+        self.meta_alone.discard(device)  # Super with another key is a shortcut
         if code == KEY_POWER:
             self.on_power()
         elif code in (KEY_HOMEPAGE, BTN_MODE):
             self.on_home()
-        elif code == KEY_HOME and device in self.meta_down:
+        elif code == KEY_HOME and (device in self.meta_down or self.in_kiosk()):
             self.on_home()
         elif code in (KEY_OK, KEY_SELECT) and self.visible:
             self.send({"evt": "accept"})
+
+    def in_kiosk(self):
+        """D108: a full-screen browser app the launcher opened is in front, not
+        the desktop. Keyboard Home, or Super pressed and let go on its own,
+        then leaves it as the remote's Home does; a keyboard has no other way
+        out of a kiosk window. On the desktop both keys are the desktop's."""
+        return bool(self.app and self.app.kiosk and not self.visible and not self.desktop)
 
     def on_power(self):
         log.info("power key: asking the launcher to confirm")
@@ -1637,7 +1656,7 @@ class Daemon:
             self.send({"evt": "launch_failed", "id": app_id, "error": str(e)})
             return
         log.info("launched %s as pid %d", app_id, proc.pid)
-        self.app = App(app_id, proc, keep_on_home)
+        self.app = App(app_id, proc, keep_on_home, kiosk=KIOSK_ARG in argv)
         self.watch_for_window(self.app)
 
     # First window (D63) --------------------------------------------------------
@@ -1883,6 +1902,7 @@ class Daemon:
             pass
         os.close(fd)
         self.meta_down.discard(path)
+        self.meta_alone.discard(path)
 
     def _read_stdin(self, stdin):
         line = stdin.readline()

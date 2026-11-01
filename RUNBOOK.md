@@ -21,6 +21,7 @@
 | Loading screen | done | "Opening <name>" with the tile and pulsing dots on the black while an app starts, from 0.5 s, at up to 30 fps (D76). 132 launcher tests |
 | Template glibc guard | done | The template built on the dev container (Debian trixie, glibc 2.41) was checked: it needs glibc 2.38 at most, and the box has 2.39, so it runs there. `tools/build-godot-template.sh` now sets aside any template that needs more than 2.39 |
 | Handoff to a Linux dev container | done | Rehearsed in a Debian trixie container like the new one (user 1000, 8 GB, no capabilities, no Docker): `tools/linux-dev-setup.sh` fetches Godot 4.7.2 (SHA-512 checked) and SCons without root; all 223 launcher tests (with the Linux-only no-shell test) and 143 daemon tests pass natively; the template builds natively with `pkgconf` added. Five launcher tests had relied on the Windows-only daemon stand-in and now turn it on. CLAUDE.md, SPEC's IPC table and this file updated |
+| Keyboard out of browser apps | done | Chief, 1 Nov: Home on a keyboard, or Super pressed and let go on its own, now leaves Netflix, Prime Video, the Browser and added websites like the remote's Home, when the launcher opened them; on the desktop and in other apps both keys do what they did (D108). 241 launcher tests, 179 daemon and installer tests. Release v0.14.7 |
 | Picture: the desktop's by default | done | Chief, 1 Nov, before the box moves to a 1080p TV: Settings > Display > Picture now starts on Automatic, which leaves the picture to X and Cinnamon (no xrandr at login or on return); 1920 x 1080 or 1280 x 720 turns the launcher's checks back on. A saved choice is kept, so this box needs Automatic chosen once. No Screen row on Automatic (D107). 241 launcher tests, 174 daemon and installer tests. Release v0.14.6 |
 | Revert: X start mode | done | v0.14.4's xorg.conf.d start mode (D105) left the TV with no signal at every start, and after a replug the session was frozen (cursor only). Taken out (D106): the launcher and installer are as in v0.14.3, and the installer now removes `/etc/X11/xorg.conf.d/90-boscamor.conf` where v0.14.4 left it (an update lists that under "needs sudo"). The boot picture through the active adapter is under Blocked until the box report from those starts is read. 240 launcher tests, 174 daemon and installer tests. Release v0.14.5 |
 | Fix: boot picture | done | The box report showed X starting the LG at its own 4K at every login, with i915 FIFO underruns inside that window on both restarts (no signal until a replug) and none on the cold boot; Cinnamon's saved layout also put 4K back after every replug. The installer now gives X a 1920 x 1080 at 60 Hz start mode for each output (`/etc/X11/xorg.conf.d/90-boscamor.conf`) and moves Cinnamon's saved layout aside; the launcher picks from the TV's own modes past it, and Automatic is the TV's own preferred mode (D105). The file checked with real Xorg 21.1 and its dummy driver. 242 launcher tests, 175 daemon and installer tests. Release v0.14.4: run the installer by hand (sudo) |
@@ -158,6 +159,14 @@ What the first box report confirmed: Mint 22.3, X11, Python 3.12, 1920x1080 at 6
 - [ ] Open an app while one downloads: the download stops and carries on after the app closes (`journalctl --user -u boscamor-input | grep -i update` says "paused").
 - [ ] Leave the next one ready and don't touch anything for 10 minutes on Home: it installs by itself the same way.
 - [ ] `ls /opt/boscamor/previous/` holds the version before.
+
+**Keyboard out of browser apps, 1 Nov 2026 (v0.14.7).** (D108) With a keyboard, to check:
+
+- [ ] Netflix, Prime Video or the Browser from the launcher: Home on the keyboard closes it and the launcher shows, as the remote's Home does.
+- [ ] The same with the Windows (Super) key pressed and let go on its own. Cinnamon also opens its menu on that key: say whether the menu shows over the launcher afterwards.
+- [ ] Super with another key (for example Super + L) doesn't close it.
+- [ ] Plex or YouTube from the launcher: keyboard Home and Super do what they did before.
+- [ ] On the desktop (Desktop in the sidebar), Firefox from the menu: Home and Super work as normal; nothing closes.
 
 **Picture left to the desktop, 1 Nov 2026 (v0.14.6).** New boxes start on Automatic (D107); this box has 1920 x 1080 saved from testing, so it keeps setting it until Automatic is chosen. To check:
 

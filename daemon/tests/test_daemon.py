@@ -312,6 +312,62 @@ class TestApps(DaemonCase):
         self.assertLess(sigs[1][1] - start, bi.GRACE_S + 0.5)
         self.assertEqual(self.d.events("app_exited")[0]["code"], -signal.SIGKILL)
 
+    # D108: Netflix, Prime Video and the Browser are Firefox kiosk windows. A
+    # keyboard's Home, or Super pressed and let go on its own, leaves them as
+    # the remote's Home does, but only when the launcher opened them and the
+    # desktop isn't showing.
+    KIOSK = ["sh", "-c", "sleep 60", "firefox", "--kiosk"]
+
+    def test_keyboard_home_leaves_a_browser_app(self):
+        self.d.handle({"cmd": "launch", "id": "netflix", "argv": self.KIOSK})
+        self.d.handle({"cmd": "state", "visible": False})
+        self.d.on_key("kbd", bi.KEY_HOME, 1)
+        self.assertTrue(self.d.pump(lambda: self.d.events("show")))
+        self.assertEqual([s for s, _ in self.d.signals], [signal.SIGTERM])
+        self.assertEqual(self.d.events("app_exited")[0]["id"], "netflix")
+
+    def test_super_alone_leaves_a_browser_app(self):
+        self.d.handle({"cmd": "launch", "id": "prime", "argv": self.KIOSK})
+        self.d.handle({"cmd": "state", "visible": False})
+        self.d.on_key("kbd", bi.KEY_LEFTMETA, 1)
+        self.d.on_key("kbd", bi.KEY_LEFTMETA, 2)  # held: still alone
+        self.assertEqual(self.d.signals, [], "not on the press")
+        self.d.on_key("kbd", bi.KEY_LEFTMETA, 0)
+        self.assertTrue(self.d.pump(lambda: self.d.events("show")))
+        self.assertEqual(self.d.events("app_exited")[0]["id"], "prime")
+
+    def test_super_with_another_key_stays(self):
+        self.d.handle({"cmd": "launch", "id": "browser", "argv": self.KIOSK})
+        self.d.handle({"cmd": "state", "visible": False})
+        self.d.on_key("kbd", bi.KEY_RIGHTMETA, 1)
+        self.d.on_key("kbd", 38, 1)  # L
+        self.d.on_key("kbd", 38, 0)
+        self.d.on_key("kbd", bi.KEY_RIGHTMETA, 0)
+        self.d.on_key("mouse", bi.KEY_LEFTMETA, 1)
+        self.d.on_key("kbd", 38, 1)  # a key on another device leaves this Super alone
+        self.d.on_key("mouse", bi.KEY_LEFTMETA, 0)
+        self.assertEqual(len(self.d.signals), 1, "only the second")
+
+    def test_keyboard_home_and_super_stay_on_the_desktop(self):
+        self.d.handle({"cmd": "launch", "id": "browser", "argv": self.KIOSK})
+        self.d.handle({"cmd": "state", "visible": False})
+        self.d.desktop = True
+        self.d.on_key("kbd", bi.KEY_HOME, 1)
+        self.d.on_key("kbd", bi.KEY_LEFTMETA, 1)
+        self.d.on_key("kbd", bi.KEY_LEFTMETA, 0)
+        self.assertEqual(self.d.signals, [])
+        self.assertEqual(self.d.events("show"), [])
+
+    def test_keyboard_home_stays_in_other_apps(self):
+        self.d.handle({"cmd": "launch", "id": "plex", "argv": ["sleep", "60"]})
+        self.d.handle({"cmd": "state", "visible": False})
+        self.d.on_key("kbd", bi.KEY_HOME, 1)
+        self.d.on_key("kbd", bi.KEY_LEFTMETA, 1)
+        self.d.on_key("kbd", bi.KEY_LEFTMETA, 0)
+        self.assertEqual(self.d.signals, [])
+        self.assertEqual(self.d.events("show"), [])
+        self.assertEqual(self.d.app.id, "plex")
+
     def test_keep_on_home_keeps_running(self):
         self.d.handle({"cmd": "launch", "id": "music", "argv": ["sleep", "60"], "keep_on_home": True})
         self.d.handle({"cmd": "state", "visible": False})
